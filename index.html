@@ -9,11 +9,11 @@
 <meta name="apple-mobile-web-app-title" content="WebCam">
 <title>WebCam DMS</title>
 <!--
-  index_webcam_v5_0_1.html — WebCam DMS v5.0.1 (28-oct-2026) · Entrega 3 de 4
+  index_webcam_v5_1_0.html — WebCam DMS v5.1.0 (28-oct-2026)
   Repo: goeapp/webcam → https://goeapp.github.io/webcam/ (subir como index.html,
         junto con manifest.json, sw.js e icons/icon-192.png, icons/icon-512.png)
 
-  Requiere en Supabase (PWAgoe): wc_esquema_v5_0_0.sql + Edge Function wc-calendario
+  Requiere en Supabase (PWAgoe): wc_esquema_v5_0_0.sql + wc_radios_v5_1_0.sql + Edge Function wc-calendario
   + https://goeapp.github.io/webcam/ en Authentication → URL Configuration → Redirect URLs.
 
   Un solo index para los dos roles, elegido una vez por dispositivo:
@@ -30,6 +30,13 @@
     se reconecta solo. La configuración del celular llega por Realtime desde GOE Admin.
 
   Changelog
+  v5.1.0 — Radio por internet en el panel de casa: barra abajo (▶/❚❚, la que suena) y botón "📻 Radios" que
+           sube un panel con las radios fijas de a 4 (flechas ‹ ›). Elegís una y baja solo (también a los 15 s).
+           Las radios se cargan en GOE Admin v1.7 → WC → 📻 Radios (las mismas para todos); mostrar_radio por celular.
+           Horizontal: la cámara pasa al lado del clima (más grande); reloj y clima del mismo tamaño.
+           + Botón ✕ para salir de pantalla completa (antes no había cómo).
+           + "← Volver a elegir Cámara / Visor" más visible (antes "Este dispositivo es otro (cambiar)").
+           + Cámara ocupada (otra pestaña o app): lo dice claro en pantalla.
   v5.0.1 — fix: el ping del celular actualiza su fila (ultimo_visto/estado) y Realtime lo
            tomaba como un cambio de configuración → nuevo ping → bucle (cartel "Configuración
            actualizada" fijo y consultas sin parar). Ahora solo reacciona si cambió algún campo
@@ -85,6 +92,8 @@ button { cursor: pointer; }
 .inp.codigo { letter-spacing: 8px; font-size: 26px; text-align: center; font-family: 'DM Mono', monospace; font-weight: 500; }
 .btn-gr { width: 100%; margin-top: 14px; padding: 11px 16px; border: 1px solid var(--accent-border); border-radius: var(--radius-sm); background: var(--accent); color: #fff; font-size: .92rem; font-weight: 600; }
 .btn-gr:disabled { opacity: .55; cursor: wait; }
+.btn-gr.volver { background: #f8fafc; color: var(--text); border: 1.5px solid #475569; font-weight: 600; margin-top: 16px; }
+.btn-gr.volver:active { background: #e2e8f0; }
 .btn-gr.sec { background: transparent; color: var(--muted); border: 1px solid var(--border); font-weight: 500; margin-top: 8px; }
 .msg { font-size: .8rem; margin-top: 10px; padding: 7px 10px; border-radius: var(--radius-sm); line-height: 1.45; }
 .msg:empty { display: none; }
@@ -123,15 +132,19 @@ button { cursor: pointer; }
 #app-tx { background: var(--panel); color: var(--panel-txt); }
 #app-tx .hdr { background: #060b16; }
 body.fs #app-tx .hdr { display: none; }
-.tx-panel { flex: 1; min-height: 0; display: grid; gap: 12px; padding: 12px; overflow: hidden;
-  grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto;
-  grid-template-areas: "reloj" "clima" "cal" "cam"; }
-.tx-panel.sin-cal { grid-template-rows: 1fr auto auto; grid-template-areas: "reloj" "clima" "cam"; }
+.tx-panel { flex: 1; min-height: 0; display: grid; gap: 12px; padding: 12px; overflow: hidden; position: relative;
+  grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  grid-template-areas: "reloj" "clima" "cal" "cam" "radio"; }
+.tx-panel.sin-cal { grid-template-rows: 1fr auto auto auto; grid-template-areas: "reloj" "clima" "cam" "radio"; }
 @media (orientation: landscape) {
-  .tx-panel { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto;
-    grid-template-areas: "reloj cal" "clima cal" "cam cal"; }
-  .tx-panel.sin-cal { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto;
-    grid-template-areas: "reloj clima" "cam cam"; }
+  /* v5.1.0: la cámara al lado del clima; la radio abajo; el calendario completo a la derecha */
+  .tx-panel { gap: 10px; padding: 10px; grid-template-columns: minmax(0, .64fr) minmax(0, .51fr) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas: "reloj reloj cal" "clima cam cal" "radio radio cal"; }
+  .tx-panel.sin-cal { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas: "reloj reloj" "clima cam" "radio radio"; }
+  .tx-panel.sin-clima { grid-template-areas: "reloj reloj cal" "cam cam cal" "radio radio cal"; }
+  .tx-panel.sin-cal.sin-clima { grid-template-areas: "reloj reloj" "cam cam" "radio radio"; }
 }
 .tarjeta { background: var(--panel2); border: 1px solid var(--panel-borde); border-radius: 16px; padding: 14px 16px; min-width: 0; }
 .t-reloj { grid-area: reloj; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; background: transparent; border: none; padding: 4px; }
@@ -143,9 +156,53 @@ body.fs #app-tx .hdr { display: none; }
   .reloj { font-size: min(13vw, 23vh); }
   .fecha { font-size: clamp(.9rem, 2vw, 1.3rem); margin-top: 2px; }
   .t-clima { padding: 10px 14px; }
-  .t-cam { padding: 8px; }
-  .prev { width: 112px; }
+  .t-cam { flex-direction: column; align-items: stretch; gap: 6px; padding: 7px; position: relative; min-height: 0; }
+  .t-cam .prev { width: 100%; flex: 1; min-height: 0; aspect-ratio: auto; }
+  .t-cam .cam-info { flex: 0 0 auto; padding: 0 4px 2px; }
+  .t-cam .cam-sub { font-size: .7rem; }
+  .t-cam .cam-acc { position: absolute; right: 12px; top: 12px; }
+  .t-cam .cam-acc .bp { height: 34px; min-width: 34px; padding: 0 8px; background: rgba(15,23,42,.75); }
 }
+/* ── RADIO (v5.1.0) ── */
+.t-radio { grid-area: radio; position: relative; padding: 0; border-color: rgba(217,119,6,.45); background: #19150a; }
+.radio-barra { display: flex; align-items: center; gap: 12px; padding: 8px 10px 8px 8px; }
+.radio-play { width: 48px; height: 48px; border-radius: 50%; border: none; background: var(--accent); color: #fff; display: grid; place-items: center; flex-shrink: 0; box-shadow: 0 2px 10px rgba(217,119,6,.35); }
+.radio-play .ico { width: 22px; height: 22px; fill: currentColor; stroke: none; }
+.radio-play:active { filter: brightness(1.15); }
+.radio-ah { flex: 1; min-width: 0; }
+.radio-k { font-size: .66rem; color: #fbbf24; letter-spacing: .12em; text-transform: uppercase; font-weight: 600; }
+.radio-nom { font-size: 1.05rem; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.radio-eq { display: flex; align-items: flex-end; gap: 3px; height: 20px; opacity: 0; transition: opacity .3s; }
+.radio-eq i { width: 4px; background: #fbbf24; border-radius: 2px; height: 30%; }
+.t-radio.suena .radio-eq { opacity: 1; }
+.t-radio.suena .radio-eq i { animation: eq 0.9s ease-in-out infinite; }
+.radio-eq i:nth-child(2) { animation-delay: -.3s !important; } .radio-eq i:nth-child(3) { animation-delay: -.6s !important; } .radio-eq i:nth-child(4) { animation-delay: -.15s !important; }
+@keyframes eq { 0%, 100% { height: 25%; } 50% { height: 100%; } }
+.radio-abrir { height: 44px; padding: 0 14px; border-radius: 12px; border: 1px solid rgba(217,119,6,.6); background: rgba(217,119,6,.1); color: #fbbf24; font-weight: 700; font-size: .9rem; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.radio-abrir:active { background: rgba(217,119,6,.25); }
+.radio-velo { position: absolute; inset: 0; background: rgba(0,0,0,.45); z-index: 19; opacity: 0; pointer-events: none; transition: opacity .25s; border-radius: inherit; }
+.radio-velo.ver { opacity: 1; pointer-events: auto; }
+.radio-hoja { position: absolute; z-index: 20; display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 8px 8px; background: #19150a; border: 1px solid var(--accent);
+  border-radius: 16px; box-shadow: 0 -12px 34px rgba(0,0,0,.6); opacity: 0; transform: translateY(24px); pointer-events: none; transition: opacity .22s, transform .22s; }
+.radio-hoja.ver { opacity: 1; transform: none; pointer-events: auto; }
+.radio-hoja .radio-barra { padding: 0; }
+.radio-cerrar { height: 40px; padding: 0 14px; border-radius: 12px; border: 1px solid rgba(217,119,6,.6); background: transparent; color: #fbbf24; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
+.radio-grilla { flex: 1; min-height: 0; display: grid; grid-template-columns: 40px minmax(0, 1fr) minmax(0, 1fr) 40px; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.radio-flecha { grid-row: span 2; border-radius: 12px; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.04); color: #e2e8f0; display: grid; place-items: center; }
+.radio-flecha .ico { width: 26px; height: 26px; }
+.radio-flecha:disabled { opacity: .25; }
+.radio-flecha.no { visibility: hidden; }
+.radio-est { min-width: 0; border-radius: 12px; border: 1px solid rgba(255,255,255,.14); background: #0f172a; color: #e2e8f0; display: flex; align-items: center; gap: 10px; padding: 0 10px; font-weight: 700; font-size: 1rem; text-align: left; }
+.radio-est span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.radio-est.on { border-color: #fbbf24; color: #fbbf24; background: #2a1f05; }
+.radio-est:active { background: #1e293b; }
+.radio-logo { width: 34px; height: 34px; border-radius: 8px; flex-shrink: 0; object-fit: cover; background: #fff; display: grid; place-items: center; font-size: .72rem; font-weight: 800; color: #fff; }
+.radio-pag { text-align: center; font-size: .72rem; color: var(--panel-muted); }
+/* ── Salir de pantalla completa (v5.1.0) ── */
+.fs-salir { position: fixed; top: 10px; right: 10px; z-index: 40; height: 40px; min-width: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.25);
+  background: rgba(15,23,42,.75); color: #fff; display: none; align-items: center; gap: 6px; font-weight: 600; font-size: .8rem; opacity: .35; transition: opacity .3s; }
+body.fs .fs-salir { display: inline-flex; }
+.fs-salir.ver { opacity: 1; }
 .t-clima { grid-area: clima; display: flex; align-items: center; gap: 14px; }
 .clima-ico { width: 46px; height: 46px; color: #fbbf24; flex-shrink: 0; }
 .clima-ico .ico { width: 46px; height: 46px; stroke-width: 1.6; }
@@ -260,7 +317,7 @@ body.fs #app-rx .hdr { display: none; }
       <button class="btn-gr" id="emp-btn" type="button">Emparejar</button>
       <div class="msg" id="emp-msg"></div>
     </div>
-    <button class="btn-gr sec" type="button" data-cambiar-rol>Este dispositivo es otro (cambiar)</button>
+    <button class="btn-gr volver" type="button" data-cambiar-rol>← Volver a elegir Cámara / Visor</button>
   </div>
 </section>
 
@@ -283,7 +340,7 @@ body.fs #app-rx .hdr { display: none; }
       <button class="btn-gr sec" id="login-volver" type="button">Cambiar email</button>
       <div class="msg" id="login-msg-codigo"></div>
     </div>
-    <button class="btn-gr sec" type="button" data-cambiar-rol>Este dispositivo es otro (cambiar)</button>
+    <button class="btn-gr volver" type="button" data-cambiar-rol>← Volver a elegir Cámara / Visor</button>
   </div>
 </section>
 
@@ -338,6 +395,25 @@ body.fs #app-rx .hdr { display: none; }
         <button class="bp pri" type="button" id="tx-iniciar" hidden><span data-ico="camara"></span><span>Iniciar</span></button>
       </div>
     </div>
+    <div class="tarjeta t-radio" id="tx-t-radio" hidden>
+      <div class="radio-barra">
+        <button class="radio-play" type="button" id="tx-radio-play" title="Escuchar / pausar" data-ico="play"></button>
+        <div class="radio-ah"><div class="radio-k" id="tx-radio-k">📻 Radio</div><div class="radio-nom" id="tx-radio-nom">Elegí una radio</div></div>
+        <div class="radio-eq"><i></i><i></i><i></i><i></i></div>
+        <button class="radio-abrir" type="button" id="tx-radio-abrir">📻 Radios ⌃</button>
+      </div>
+    </div>
+    <div class="radio-velo" id="tx-radio-velo"></div>
+    <div class="radio-hoja" id="tx-radio-hoja">
+      <div class="radio-barra">
+        <button class="radio-play" type="button" id="tx-radio-play2" title="Escuchar / pausar" data-ico="play"></button>
+        <div class="radio-ah"><div class="radio-k" id="tx-radio-k2">📻 Radio</div><div class="radio-nom" id="tx-radio-nom2">Elegí una radio</div></div>
+        <button class="radio-cerrar" type="button" id="tx-radio-cerrar">Cerrar ⌄</button>
+      </div>
+      <div class="radio-grilla" id="tx-radio-grilla"></div>
+      <div class="radio-pag" id="tx-radio-pag"></div>
+    </div>
+    <audio id="tx-audio" preload="none"></audio>
   </main>
 </div>
 
@@ -375,6 +451,7 @@ body.fs #app-rx .hdr { display: none; }
 
 <div id="modal"><div class="modal" role="dialog" aria-modal="true"><div class="modal-head" id="modal-tit"></div><div class="modal-body" id="modal-body"></div><div class="modal-foot" id="modal-foot"></div></div></div>
 <div id="toast"></div>
+<button class="fs-salir" type="button" id="fs-salir" title="Salir de pantalla completa"><span data-ico="salir"></span><span>Salir</span></button>
 
 <script>
 'use strict';
@@ -382,7 +459,7 @@ body.fs #app-rx .hdr { display: none; }
 /* ════════════════════════════════════════════════════════
    CONFIGURACIÓN
 ════════════════════════════════════════════════════════ */
-const VERSION_UI    = 'v5.0.1';
+const VERSION_UI    = 'v5.1.0';
 const SUPABASE_URL  = 'https://uhuftsxrzwhmvzygcuvp.supabase.co';
 const SUPABASE_KEY  = 'sb_publishable_TCibRAnzgaDIbn_MIirw6w_FltKG8X3';
 const REDIRECT_MAIL = 'https://goeapp.github.io/webcam/';   // la plantilla del mail lo usa para poner "WEBCAM"
@@ -399,10 +476,11 @@ const CALIDAD = {
   baja:  { w: 640,  h: 360, fps: 10, br: 300000 }
 };
 // Campos de wc_dispositivos que son configuración (los demás —ultimo_visto, estado— los cambia el ping)
-const CFG_FILA = ['nombre', 'camara_id', 'autoarranque', 'camara_inicial', 'mostrar_reloj', 'mostrar_clima', 'mostrar_calendario', 'calendario_id', 'calidad'];
-const CFG_PING = ['nombre', 'camara_id', 'camara_activa', 'autoarranque', 'camara_inicial', 'mostrar_reloj', 'mostrar_clima', 'mostrar_calendario', 'calendario', 'calidad'];
-const firma = (o, campos) => campos.map(k => String(o ? o[k] : '')).join('|');
-const LS = { rol: 'wc-rol', email: 'wc-email', nombre: 'wc-tx-nombre', geo: 'wc-geo' };
+const CFG_FILA = ['nombre', 'camara_id', 'autoarranque', 'camara_inicial', 'mostrar_reloj', 'mostrar_clima', 'mostrar_calendario', 'calendario_id', 'calidad', 'mostrar_radio'];
+const CFG_PING = ['nombre', 'camara_id', 'camara_activa', 'autoarranque', 'camara_inicial', 'mostrar_reloj', 'mostrar_clima', 'mostrar_calendario', 'calendario', 'calidad', 'mostrar_radio', 'radios'];
+const firma = (o, campos) => campos.map(k => { const v = o ? o[k] : ''; return v && typeof v === 'object' ? JSON.stringify(v) : String(v); }).join('|');
+const LS = { rol: 'wc-rol', email: 'wc-email', nombre: 'wc-tx-nombre', geo: 'wc-geo', radio: 'wc-radio-ult' };
+const RADIO_POR_PAG = 4, RADIO_CIERRE_MS = 15000;
 // Tamaño de letra del calendario (solo en este celular)
 const CAL_ESC = { clave: 'wc-cal-escala', def: 0.85, min: 0.6, max: 1.5, paso: 0.1 };
 const PING_MS = 60000, LISTA_MS = 20000, CLIMA_MS = 30 * 60000, CAL_MS = 15 * 60000;
@@ -419,7 +497,8 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
 const st = { rol: null, email: '', uid: null, wake: null, timers: [] };
 const tx = { cfg: null, canal: null, rtOk: false, stream: null, facing: 'environment', torch: false,
              pc: null, dc: null, sesion: null, remotaLista: false, pendientes: [], tCaida: null, tSinResp: null,
-             pausada: false, tReintento: null, estado: 'inactivo', geo: null, calFecha: '', firmaFila: undefined };
+             pausada: false, tReintento: null, estado: 'inactivo', geo: null, calFecha: '', firmaFila: undefined,
+             radio: null, radioPag: 0, radioSuena: false, tHoja: null };
 const rx = { camaras: [], cam: null, canal: null, sesion: null, pc: null, dc: null, remotaLista: false, pendientes: [],
              tOferta: null, tCaida: null, intentos: 0, desplazado: false, torchOn: false, facing: 'environment' };
 let emailPendiente = '';
@@ -471,6 +550,10 @@ const ICO_PATHS = {
   menu:   '<circle cx="12" cy="5" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="19" r="1.4" fill="currentColor"/>',
   atras:  '<path d="M15 18l-6-6 6-6"/>',
   flip:   '<path d="M20 7h-3.5l-1.5-2H9L7.5 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/><path d="M9 13a3 3 0 0 1 5.2-2M15 13a3 3 0 0 1-5.2 2"/><path d="M14.5 9.5v1.7h-1.7M9.5 16.5v-1.7h1.7"/>',
+  play:   '<path d="M7 4.5v15l13-7.5z"/>',
+  pausa:  '<rect x="6" y="4.5" width="4" height="15" rx="1"/><rect x="14" y="4.5" width="4" height="15" rx="1"/>',
+  izq:    '<path d="M15 18l-6-6 6-6"/>',
+  der:    '<path d="M9 18l6-6-6-6"/>',
   rayo:   '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
   sol:    '<circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2 12h2M20 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/>',
   nube:   '<path d="M17.5 19H8a5 5 0 1 1 1-9.9A6 6 0 0 1 20.5 12 3.5 3.5 0 0 1 17.5 19z"/>',
@@ -671,6 +754,8 @@ function aplicarPanel() {
   $('tx-t-cal').hidden = !c.mostrar_calendario;
   $('tx-panel').classList.toggle('sin-cal', !c.mostrar_calendario);
   $('tx-cal-nombre').textContent = c.calendario || 'Calendario';
+  $('tx-panel').classList.toggle('sin-clima', c.mostrar_clima === false);
+  aplicarRadios();
 }
 // Cambios de configuración (GOE Admin → Realtime o ping)
 function aplicarConfig(nueva) {
@@ -703,11 +788,9 @@ function conectarCanalTx() {
         if (f === tx.firmaFila) return;
         tx.firmaFila = f;               // el primer aviso solo toma la referencia (sin cartel si nada cambió)
       }
-      const antes = firma(tx.cfg, CFG_PING);
-      const cfg = await ping();
-      if (cfg === null) { salirTx(); mostrarEmparejar('Este celular fue desemparejado desde GOE Admin.'); return; }
-      if (cfg) { aplicarConfig(cfg); if (firma(cfg, CFG_PING) !== antes) toast('Configuración actualizada'); }
+      await refrescarConfig();
     })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'wc_radios' }, () => refrescarConfig())   // v5.1.0
     .subscribe(status => {
       log('rt', status);
       if (status === 'SUBSCRIBED') { tx.rtOk = true; puntoRed('ok'); }
@@ -716,6 +799,12 @@ function conectarCanalTx() {
         clearTimeout(conectarCanalTx._t); conectarCanalTx._t = setTimeout(() => { if (st.rol === 'tx' && document.visibilityState === 'visible') conectarCanalTx(); }, 8000);
       }
     });
+}
+async function refrescarConfig() {
+  const antes = firma(tx.cfg, CFG_PING);
+  const cfg = await ping();
+  if (cfg === null) { salirTx(); mostrarEmparejar('Este celular fue desemparejado desde GOE Admin.'); return; }
+  if (cfg) { aplicarConfig(cfg); if (firma(cfg, CFG_PING) !== antes) toast('Configuración actualizada'); }
 }
 function puntoRed(tipo) {
   $('tx-hdr-punto').className = 'punto ' + tipo;
@@ -757,7 +846,11 @@ async function iniciarCamara() {
     console.error('[WebCam getUserMedia]', e);
     tx.stream = null;
     const per = e && e.name === 'NotAllowedError';
-    estadoTx('error', per ? 'Falta el permiso de cámara: tocá Iniciar y aceptá' : 'No se pudo abrir la cámara: ' + (e.message || e.name));
+    const ocupada = e && /NotReadable|TrackStart|AbortError|Could not start/i.test(e.name + ' ' + e.message);
+    estadoTx('error', per ? 'Falta el permiso de cámara: tocá Iniciar y aceptá'
+      : ocupada ? 'La cámara la está usando otra pestaña o app: cerrala (ej. la pestaña de Chrome con WebCam)'
+      : 'No se pudo abrir la cámara: ' + (e.message || e.name));
+    if (ocupada) toast('Cámara ocupada por otra pestaña o app', true);
     evento('camara_error', { error: String(e && (e.name + ': ' + e.message)) });
     if (!per && tx.cfg.autoarranque) tx.tReintento = setTimeout(iniciarCamara, 15000);
     return;
@@ -922,9 +1015,133 @@ function enviarCaps() {
 }
 function salirTx() {
   limpiarTimers();
+  pararRadio(); cerrarHoja();
   detenerCamara('desemparejado');
   if (tx.canal) { try { sb.removeChannel(tx.canal); } catch (e) { /* nada */ } tx.canal = null; }
   soltarWakeLock();
+}
+
+/* ── Radio por internet (v5.1.0) ──
+   Las radios vienen en el ping (wc_radios activas, las mismas para todos). Suena solo al tocar ▶:
+   Android no deja arrancar audio sin un toque. El audio es solo de este celular: no va al visor. */
+function radiosCfg() { return (tx.cfg && Array.isArray(tx.cfg.radios)) ? tx.cfg.radios : []; }
+function aplicarRadios() {
+  const rs = radiosCfg(), ver = !!(tx.cfg && tx.cfg.mostrar_radio !== false && rs.length);
+  $('tx-t-radio').hidden = !ver;
+  if (!ver) { pararRadio(); cerrarHoja(); tx.radio = null; pintarRadio(); return; }
+  if (tx.radio) {                                   // la que suena sigue en la lista? (pudo cambiar en GOE Admin)
+    const r = rs.find(x => x.id === tx.radio.id);
+    if (r) tx.radio = r; else { pararRadio(); tx.radio = null; }
+  }
+  if (!tx.radio) { const ult = lsGet(LS.radio); tx.radio = rs.find(x => x.id === ult) || null; }
+  const pags = Math.max(1, Math.ceil(rs.length / RADIO_POR_PAG));
+  if (tx.radioPag >= pags) tx.radioPag = pags - 1;
+  pintarRadio();
+}
+function logoRadio(r) {
+  const ini = (r.nombre || '?').replace(/^(FM|AM|Radio)\s+/i, '').split(/\s+/).map(w => w[0]).join('').slice(0, 3).toUpperCase();
+  let h = 0; for (const c of r.nombre || '') h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  const color = ['#1d4ed8', '#dc2626', '#7c3aed', '#059669', '#d97706', '#db2777', '#0891b2', '#4d7c0f'][h % 8];
+  const fb = `<span class="radio-logo" style="background:${color}">${esc(ini)}</span>`;
+  return r.logo ? `<img class="radio-logo" src="${esc(r.logo)}" alt="" referrerpolicy="no-referrer" data-fb="${esc(fb)}">` : fb;
+}
+function pintarRadio() {
+  const suena = tx.radioSuena, r = tx.radio;
+  const k = suena ? '📻 Sonando' : r ? '📻 Lista para escuchar' : '📻 Radio';
+  const nom = r ? r.nombre : 'Elegí una radio';
+  ['', '2'].forEach(n => {
+    $('tx-radio-k' + n).textContent = k; $('tx-radio-nom' + n).textContent = nom;
+    const b = $('tx-radio-play' + n); b.innerHTML = ico(suena ? 'pausa' : 'play'); b.title = suena ? 'Pausar' : 'Escuchar';
+  });
+  $('tx-t-radio').classList.toggle('suena', suena);
+  const rs = radiosCfg(), pags = Math.max(1, Math.ceil(rs.length / RADIO_POR_PAG));
+  const vis = rs.slice(tx.radioPag * RADIO_POR_PAG, tx.radioPag * RADIO_POR_PAG + RADIO_POR_PAG);
+  const flechas = rs.length > RADIO_POR_PAG;
+  const celdas = vis.map(x => `<button class="radio-est ${r && x.id === r.id ? 'on' : ''}" type="button" data-radio="${esc(x.id)}">${logoRadio(x)}<span>${esc(x.nombre)}</span></button>`);
+  while (celdas.length < RADIO_POR_PAG) celdas.push('<div></div>');
+  // grilla 2×2 en orden de lectura, con la flecha ‹ a la izquierda y › a la derecha (ocupan las 2 filas)
+  $('tx-radio-grilla').innerHTML =
+    `<button class="radio-flecha ${flechas ? '' : 'no'}" type="button" id="tx-radio-ant" ${tx.radioPag > 0 ? '' : 'disabled'} title="Anteriores">${ico('izq')}</button>` +
+    `<button class="radio-flecha ${flechas ? '' : 'no'}" type="button" id="tx-radio-sig" ${tx.radioPag < pags - 1 ? '' : 'disabled'} title="Siguientes" style="grid-column:4;grid-row:1 / span 2">${ico('der')}</button>` +
+    celdas.join('');
+  $('tx-radio-pag').textContent = flechas ? (tx.radioPag + 1) + ' / ' + pags : '';
+  $('tx-radio-grilla').querySelectorAll('img.radio-logo').forEach(img => img.onerror = () => { img.outerHTML = img.dataset.fb; });
+  $('tx-radio-grilla').querySelectorAll('[data-radio]').forEach(b => b.onclick = () => elegirRadio(b.dataset.radio));
+  $('tx-radio-ant').onclick = () => { if (tx.radioPag > 0) { tx.radioPag--; pintarRadio(); } reprogramarCierre(); };
+  $('tx-radio-sig').onclick = () => { if (tx.radioPag < pags - 1) { tx.radioPag++; pintarRadio(); } reprogramarCierre(); };
+}
+function elegirRadio(id) {
+  const r = radiosCfg().find(x => x.id === id); if (!r) return;
+  tx.radio = r; lsSet(LS.radio, r.id);
+  tocarRadio(r);
+  pintarRadio();
+  clearTimeout(tx.tHoja); tx.tHoja = setTimeout(cerrarHoja, 700);      // elegiste: el panel baja solo
+}
+function tocarRadio(r) {
+  const a = $('tx-audio');
+  tx.radioSuena = true; pintarRadio();
+  $('tx-radio-k').textContent = $('tx-radio-k2').textContent = '📻 Conectando…';
+  a.src = r.url;                                    // stream en vivo: siempre se vuelve a pedir (sin audio viejo en buffer)
+  const p = a.play();
+  if (p && p.catch) p.catch(e => { log('radio play', e.name, e.message); if (e.name !== 'AbortError') falloRadio(r, e); });
+  evento('radio', { nombre: r.nombre });
+  if ('mediaSession' in navigator && window.MediaMetadata) {
+    try { navigator.mediaSession.metadata = new MediaMetadata({ title: r.nombre, artist: 'WebCam · Radio', artwork: r.logo ? [{ src: r.logo }] : [] }); } catch (e) { /* nada */ }
+  }
+}
+function falloRadio(r, e) {
+  tx.radioSuena = false; pintarRadio();
+  toast('No se pudo escuchar ' + r.nombre + (e && e.name === 'NotAllowedError' ? ': tocá ▶ de nuevo' : ': probá otra'), true);
+  evento('radio_error', { nombre: r.nombre, error: String(e && (e.name || e.message) || 'error') });
+}
+function pararRadio() {
+  const a = $('tx-audio'); if (!a) return;
+  try { a.pause(); a.removeAttribute('src'); a.load(); } catch (e) { /* nada */ }
+  tx.radioSuena = false;
+}
+function playPausaRadio() {
+  if (tx.radioSuena) { pararRadio(); pintarRadio(); return; }
+  if (tx.radio) { tocarRadio(tx.radio); return; }
+  abrirHoja();                                      // sin radio elegida: mostrar las radios
+}
+function abrirHoja() {
+  const panel = $('tx-panel'), hoja = $('tx-radio-hoja'), barra = $('tx-t-radio');
+  const pr = panel.getBoundingClientRect(), br = barra.getBoundingClientRect();
+  // tapa el clima y la cámara (no el reloj ni el calendario)
+  const arriba = ['tx-t-clima', 'tx-t-cam'].map(id => $(id)).filter(el => !el.hidden && el.offsetParent).map(el => el.getBoundingClientRect().top);
+  let top = arriba.length ? Math.min(...arriba) : br.top - 240;
+  if (br.bottom - top < 200) top = br.bottom - 200;
+  hoja.style.left = (br.left - pr.left) + 'px'; hoja.style.width = br.width + 'px';
+  hoja.style.top = Math.max(0, top - pr.top) + 'px'; hoja.style.height = (br.bottom - Math.max(pr.top, top)) + 'px';
+  pintarRadio();
+  hoja.classList.add('ver'); $('tx-radio-velo').classList.add('ver');
+  reprogramarCierre();
+}
+function cerrarHoja() { clearTimeout(tx.tHoja); const h = $('tx-radio-hoja'); if (h) h.classList.remove('ver'); const v = $('tx-radio-velo'); if (v) v.classList.remove('ver'); }
+function reprogramarCierre() { clearTimeout(tx.tHoja); tx.tHoja = setTimeout(cerrarHoja, RADIO_CIERRE_MS); }
+function enlazarRadio() {
+  const a = $('tx-audio');
+  a.addEventListener('playing', () => { if (tx.radio) { tx.radioSuena = true; pintarRadio(); } });
+  a.addEventListener('waiting', () => { if (tx.radioSuena) $('tx-radio-k').textContent = $('tx-radio-k2').textContent = '📻 Cargando…'; });
+  a.addEventListener('error', () => { if (tx.radioSuena && tx.radio && a.getAttribute('src')) falloRadio(tx.radio, a.error ? { name: 'MediaError ' + a.error.code } : null); });
+  $('tx-radio-play').onclick = playPausaRadio;
+  $('tx-radio-play2').onclick = () => { playPausaRadio(); reprogramarCierre(); };
+  $('tx-radio-abrir').onclick = abrirHoja;
+  $('tx-radio-cerrar').onclick = cerrarHoja;
+  $('tx-radio-velo').onclick = cerrarHoja;
+  window.addEventListener('resize', cerrarHoja);
+  if ('mediaSession' in navigator) {
+    try {
+      navigator.mediaSession.setActionHandler('play', () => { if (tx.radio && !tx.radioSuena) tocarRadio(tx.radio); });
+      navigator.mediaSession.setActionHandler('pause', () => { pararRadio(); pintarRadio(); });
+    } catch (e) { /* nada */ }
+  }
+}
+
+/* ── Salir de pantalla completa (v5.1.0): botón que se ve tenue y se aclara al tocar ── */
+function mostrarSalirFs() {
+  const b = $('fs-salir'); if (!enFull()) return;
+  b.classList.add('ver'); clearTimeout(mostrarSalirFs._t); mostrarSalirFs._t = setTimeout(() => b.classList.remove('ver'), 4000);
 }
 
 /* ── Panel de casa: reloj, clima, calendario ── */
@@ -1229,6 +1446,8 @@ function alternarFull() {
 function alCambiarFull() {
   const fs = enFull();
   document.body.classList.toggle('fs', fs);
+  if (fs) mostrarSalirFs();
+  cerrarHoja();
   document.querySelectorAll('[data-full]').forEach(b => { b.innerHTML = ico(fs ? 'salir' : 'full'); b.title = fs ? 'Salir de pantalla completa' : 'Pantalla completa'; });
 }
 document.addEventListener('fullscreenchange', alCambiarFull);
@@ -1326,6 +1545,9 @@ window.addEventListener('load', async () => {
   $('tx-cal-menos').onclick = () => escalaCal(-CAL_ESC.paso);
   $('tx-cal-mas').onclick = () => escalaCal(CAL_ESC.paso);
   escalaCal(0);
+  enlazarRadio();
+  $('fs-salir').onclick = salirFull;
+  document.addEventListener('pointerdown', () => { if (enFull()) mostrarSalirFs(); }, true);
   $('rx-menu').onclick = menuRx;
   $('rx-volver').onclick = salirVista;
   $('rx-torch').onclick = () => { rx.torchOn = !rx.torchOn; if (comandoRx({ cmd: 'torch', value: rx.torchOn })) $('rx-torch').classList.toggle('on', rx.torchOn); };

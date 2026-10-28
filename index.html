@@ -1,0 +1,1306 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="WebCam">
+<title>WebCam DMS</title>
+<!--
+  index_webcam_v5_0_0.html — WebCam DMS v5.0.0 (28-oct-2026) · Entrega 3 de 4
+  Repo: goeapp/webcam → https://goeapp.github.io/webcam/ (subir como index.html,
+        junto con manifest.json, sw.js e icons/icon-192.png, icons/icon-512.png)
+
+  Requiere en Supabase (PWAgoe): wc_esquema_v5_0_0.sql + Edge Function wc-calendario
+  + https://goeapp.github.io/webcam/ en Authentication → URL Configuration → Redirect URLs.
+
+  Un solo index para los dos roles, elegido una vez por dispositivo:
+  · Cámara (el celular del lavadero): sesión anónima de Supabase emparejada con un código
+    de 6 dígitos (como la tablet de M2). Arranca transmitiendo sola al abrir (si el
+    dispositivo tiene "arranque automático"). La pantalla es un panel de casa: reloj,
+    clima, calendario del día y una vista previa chica; en horizontal, dos columnas.
+    Wake Lock para que no se apague la pantalla.
+  · Visor: login por código (Supabase Auth, como LO v8 y M2). Lista de cámaras con su
+    estado, video en vivo, linterna y cambio de cámara a distancia, pantalla completa.
+  · Señalización WebRTC por Realtime (tabla wc_senales): el visor manda "hola", la
+    cámara corta al visor anterior ("Otro dispositivo tomó la cámara") y le ofrece la
+    conexión al nuevo. Los candidatos ICE se mandan apenas aparecen. Si se cae, el visor
+    se reconecta solo. La configuración del celular llega por Realtime desde GOE Admin.
+
+  Changelog
+  v5.0.0 — migración a Supabase (adiós GAS, Sheet y token por URL). Ver arriba.
+  v4.7   — patrón de instalación estándar, fix SW y manifest (GAS + Sheets).
+-->
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@400;500&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/dist/umd/supabase.js"></script>
+<style>
+/* ── TOKENS (stack: M2 / LO / GOE Admin) ─────────────────── */
+:root {
+  --bg: #f1f5f9; --surface: #ffffff; --border: #e2e8f0;
+  --accent: #d97706; --accent-border: #92400e; --accent2: #0f172a;
+  --tag-bg: #fef3c7; --tag-fg: #92400e;
+  --text: #1e293b; --muted: #64748b; --success: #16a34a; --danger: #dc2626;
+  --ok-bg: #dcfce7; --ok-fg: #166534; --err-bg: #fee2e2; --err-fg: #991b1b;
+  --panel: #0b1220; --panel2: #131c2e; --panel-borde: rgba(255,255,255,.08); --panel-txt: rgba(255,255,255,.92); --panel-muted: rgba(255,255,255,.5);
+  --radius: 12px; --radius-sm: 8px;
+  --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.04);
+  --shadow-md: 0 4px 12px rgba(0,0,0,.18);
+  --header-h: 44px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--text); font-family: 'DM Sans', system-ui, sans-serif; font-size: 14px; line-height: 1.5; overflow: hidden; -webkit-tap-highlight-color: transparent; }
+button, input, select { font-family: inherit; font-size: inherit; color: inherit; }
+button { cursor: pointer; }
+[hidden] { display: none !important; }
+
+/* ── ÍCONOS SVG ─────────────────────────────────────────── */
+.ico { width: 18px; height: 18px; display: block; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ── PANTALLAS DE ENTRADA (de M2) ───────────────────────── */
+.pantalla { display: none; flex-direction: column; align-items: center; justify-content: center; height: 100%; padding: 20px; gap: 18px; overflow-y: auto; }
+.pantalla.activa { display: flex; }
+.caja { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 32px 28px; max-width: 400px; width: 100%; text-align: center; box-shadow: var(--shadow-md); }
+.caja-logo { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 4px; color: var(--accent); }
+.caja-logo .ico { width: 30px; height: 30px; }
+.caja-tit { font-family: 'Bebas Neue', sans-serif; font-size: 2.1rem; color: var(--accent); letter-spacing: 3px; line-height: 1; }
+.caja-sub { font-size: .8rem; color: var(--muted); margin-bottom: 22px; }
+.paso { text-align: left; }
+.paso label { display: block; font-size: .72rem; font-weight: 600; color: var(--muted); margin: 10px 0 4px; text-transform: uppercase; letter-spacing: .05em; }
+.inp { width: 100%; font-size: 16px; padding: 10px 12px; border: 1.5px solid var(--border); border-radius: var(--radius-sm); background: #f8fafc; outline: none; }
+.inp:focus { border-color: var(--accent); background: #fff; }
+.inp.codigo { letter-spacing: 8px; font-size: 26px; text-align: center; font-family: 'DM Mono', monospace; font-weight: 500; }
+.btn-gr { width: 100%; margin-top: 14px; padding: 11px 16px; border: 1px solid var(--accent-border); border-radius: var(--radius-sm); background: var(--accent); color: #fff; font-size: .92rem; font-weight: 600; }
+.btn-gr:disabled { opacity: .55; cursor: wait; }
+.btn-gr.sec { background: transparent; color: var(--muted); border: 1px solid var(--border); font-weight: 500; margin-top: 8px; }
+.msg { font-size: .8rem; margin-top: 10px; padding: 7px 10px; border-radius: var(--radius-sm); line-height: 1.45; }
+.msg:empty { display: none; }
+.msg.error { background: var(--err-bg); color: var(--err-fg); }
+.msg.info { background: var(--tag-bg); color: var(--tag-fg); }
+.msg.ok { background: var(--ok-bg); color: var(--ok-fg); }
+.enviado { font-size: .82rem; color: var(--muted); line-height: 1.5; }
+.enviado b { color: var(--text); }
+.roles { display: flex; flex-direction: column; gap: 12px; }
+.rol { display: flex; align-items: center; gap: 14px; text-align: left; padding: 16px 18px; border: 1.5px solid var(--border); border-radius: var(--radius); background: #f8fafc; }
+.rol:hover, .rol:active { border-color: var(--accent); background: #fff7ed; }
+.rol-ico { width: 44px; height: 44px; border-radius: 12px; background: var(--tag-bg); color: var(--tag-fg); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.rol-ico .ico { width: 24px; height: 24px; }
+.rol-tit { font-weight: 600; font-size: 1rem; }
+.rol-sub { font-size: .78rem; color: var(--muted); }
+.pie-ver { font-size: .72rem; color: var(--muted); }
+
+/* ── HEADER MÍNIMO (de M2) ──────────────────────────────── */
+.app { display: none; flex-direction: column; height: 100%; }
+.app.activa { display: flex; }
+.hdr { height: var(--header-h); background: var(--accent2); display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px; flex-shrink: 0; color: #fff; padding-top: env(safe-area-inset-top, 0); }
+.hdr-tit { font-family: 'Bebas Neue', sans-serif; font-size: 1.3rem; color: var(--accent); letter-spacing: 2px; line-height: 1; }
+.hdr-ver { font-size: .64rem; color: rgba(255,255,255,.35); }
+.hdr-nombre { font-size: .82rem; color: rgba(255,255,255,.85); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; padding-left: 4px; }
+.hb { background: transparent; border: 1px solid rgba(255,255,255,.18); color: rgba(255,255,255,.85); border-radius: 7px; height: 30px; min-width: 32px; padding: 0 8px; font-size: .8rem; display: inline-flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
+.hb:active { background: rgba(255,255,255,.12); }
+.hb.inst { border-color: rgba(217,119,6,.7); color: #fbbf24; }
+.punto { width: 9px; height: 9px; border-radius: 50%; background: #64748b; flex-shrink: 0; display: inline-block; }
+.punto.ok { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
+.punto.err { background: #ef4444; box-shadow: 0 0 6px #ef4444; }
+.punto.esp { background: #f59e0b; animation: latido 1.2s ease infinite; }
+@keyframes latido { 50% { opacity: .35; } }
+.hdr-estado { display: inline-flex; align-items: center; gap: 6px; font-size: .76rem; color: rgba(255,255,255,.7); white-space: nowrap; }
+
+/* ── CÁMARA: PANEL DE CASA ──────────────────────────────── */
+#app-tx { background: var(--panel); color: var(--panel-txt); }
+#app-tx .hdr { background: #060b16; }
+body.fs #app-tx .hdr { display: none; }
+.tx-panel { flex: 1; min-height: 0; display: grid; gap: 12px; padding: 12px; overflow: hidden;
+  grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-areas: "reloj" "clima" "cal" "cam"; }
+.tx-panel.sin-cal { grid-template-rows: 1fr auto auto; grid-template-areas: "reloj" "clima" "cam"; }
+@media (orientation: landscape) {
+  .tx-panel { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto;
+    grid-template-areas: "reloj cal" "clima cal" "cam cal"; }
+  .tx-panel.sin-cal { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas: "reloj clima" "cam cam"; }
+}
+.tarjeta { background: var(--panel2); border: 1px solid var(--panel-borde); border-radius: 16px; padding: 14px 16px; min-width: 0; }
+.t-reloj { grid-area: reloj; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; background: transparent; border: none; padding: 4px; }
+.reloj { font-family: 'Bebas Neue', sans-serif; letter-spacing: 4px; line-height: .9; color: #fff; font-size: min(30vw, 22vh); }
+.reloj .seg { font-size: .38em; color: rgba(255,255,255,.4); letter-spacing: 2px; margin-left: 4px; }
+.fecha { font-size: clamp(.95rem, 4.2vw, 1.5rem); color: rgba(255,255,255,.65); margin-top: 6px; }
+@media (orientation: landscape) {
+  .t-reloj { overflow: hidden; }
+  .reloj { font-size: min(13vw, 23vh); }
+  .fecha { font-size: clamp(.9rem, 2vw, 1.3rem); margin-top: 2px; }
+  .t-clima { padding: 10px 14px; }
+  .t-cam { padding: 8px; }
+  .prev { width: 112px; }
+}
+.t-clima { grid-area: clima; display: flex; align-items: center; gap: 14px; }
+.clima-ico { width: 46px; height: 46px; color: #fbbf24; flex-shrink: 0; }
+.clima-ico .ico { width: 46px; height: 46px; stroke-width: 1.6; }
+.clima-temp { font-family: 'DM Mono', monospace; font-size: 2.2rem; font-weight: 500; line-height: 1; }
+.clima-desc { font-size: .95rem; color: rgba(255,255,255,.8); }
+.clima-mm { font-size: .8rem; color: var(--panel-muted); }
+.clima-nada { color: var(--panel-muted); font-size: .9rem; }
+.t-cal { grid-area: cal; display: flex; flex-direction: column; min-height: 0; padding: 0; overflow: hidden; }
+.cal-tit { padding: 12px 16px 8px; display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid var(--panel-borde); }
+.cal-tit b { font-family: 'Bebas Neue', sans-serif; font-size: 1.35rem; letter-spacing: 1px; color: #fbbf24; font-weight: 400; }
+.cal-tit span { font-size: .8rem; color: var(--panel-muted); }
+.cal-lista { overflow-y: auto; padding: 6px 0 10px; flex: 1; min-height: 0; }
+.cal-ev { display: flex; gap: 12px; padding: 9px 16px; align-items: baseline; }
+.cal-ev + .cal-ev { border-top: 1px solid rgba(255,255,255,.05); }
+.cal-hora { font-family: 'DM Mono', monospace; font-size: 1rem; color: #fbbf24; min-width: 56px; flex-shrink: 0; }
+.cal-hora.td { font-family: 'DM Sans', sans-serif; font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: #93c5fd; padding-top: 3px; }
+.cal-txt { min-width: 0; }
+.cal-titulo { font-size: clamp(1rem, 3.6vw, 1.25rem); color: #fff; line-height: 1.3; word-wrap: break-word; }
+.cal-lugar { font-size: .8rem; color: var(--panel-muted); }
+.cal-vacio { padding: 18px 16px; color: var(--panel-muted); font-size: .95rem; }
+.t-cam { grid-area: cam; display: flex; align-items: center; gap: 12px; padding: 10px; }
+.prev { position: relative; width: 140px; aspect-ratio: 16/9; border-radius: 10px; overflow: hidden; background: #000; flex-shrink: 0; }
+.prev video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.prev .prev-nada { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,.3); }
+.cam-info { flex: 1; min-width: 0; }
+.cam-estado { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: .95rem; }
+.cam-sub { font-size: .78rem; color: var(--panel-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cam-acc { display: flex; gap: 6px; flex-shrink: 0; }
+.bp { height: 40px; min-width: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); color: #fff; display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-weight: 600; font-size: .85rem; }
+.bp:active { background: rgba(255,255,255,.16); }
+.bp.pri { background: var(--accent); border-color: var(--accent-border); }
+
+/* ── VISOR ──────────────────────────────────────────────── */
+.rx-cuerpo { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; }
+.rx-tit { font-family: 'Bebas Neue', sans-serif; font-size: 1.3rem; letter-spacing: 1px; margin: 4px 2px 10px; color: var(--accent2); }
+.cams { display: flex; flex-direction: column; gap: 10px; max-width: 640px; margin: 0 auto; }
+.cam { display: flex; align-items: center; gap: 14px; text-align: left; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); width: 100%; }
+.cam:active { border-color: var(--accent); }
+.cam-ico { width: 44px; height: 44px; border-radius: 12px; background: #f1f5f9; display: flex; align-items: center; justify-content: center; color: var(--muted); flex-shrink: 0; }
+.cam-ico.on { background: var(--ok-bg); color: var(--ok-fg); }
+.cam-nom { font-weight: 600; font-size: 1rem; }
+.cam-det { font-size: .78rem; color: var(--muted); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; font-size: .7rem; font-weight: 600; background: #e2e8f0; color: #475569; white-space: nowrap; }
+.chip.ok { background: var(--ok-bg); color: var(--ok-fg); }
+.chip.warn { background: var(--tag-bg); color: var(--tag-fg); }
+.chip.err { background: var(--err-bg); color: var(--err-fg); }
+.vacio { text-align: center; color: var(--muted); padding: 30px 10px; font-size: .9rem; }
+.spin { width: 18px; height: 18px; border: 2.5px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: gira .8s linear infinite; display: inline-block; vertical-align: middle; }
+.spin.claro { border-color: rgba(255,255,255,.2); border-top-color: #fbbf24; }
+@keyframes gira { to { transform: rotate(360deg); } }
+
+#rx-ver { flex: 1; min-height: 0; display: flex; flex-direction: column; background: #000; }
+.vid { position: relative; flex: 1; min-height: 0; background: #000; }
+.vid video { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+.vid-msg { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: rgba(255,255,255,.85); text-align: center; padding: 24px; background: rgba(0,0,0,.55); font-size: .95rem; }
+.vid-msg b { font-size: 1.05rem; color: #fff; }
+.vid-msg .bp { margin-top: 4px; }
+.vid-ctrl { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: center; gap: 10px; padding: 12px; padding-bottom: max(12px, env(safe-area-inset-bottom)); background: linear-gradient(transparent, rgba(0,0,0,.55)); }
+.vid-ctrl .bp { background: rgba(15,23,42,.7); height: 46px; min-width: 46px; }
+.vid-ctrl .bp:disabled { opacity: .35; }
+.vid-ctrl .bp.on { background: #fef9c3; color: #713f12; border-color: #fde047; }
+.vid-estado { position: absolute; top: 10px; left: 10px; display: inline-flex; align-items: center; gap: 6px; background: rgba(15,23,42,.7); color: #fff; font-size: .76rem; padding: 4px 10px; border-radius: 999px; }
+body.fs #app-rx .hdr { display: none; }
+
+/* ── MODAL / TOAST (de M2) ──────────────────────────────── */
+#modal { position: fixed; inset: 0; background: rgba(15,23,42,.55); display: none; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
+#modal.abierto { display: flex; }
+.modal { background: var(--surface); color: var(--text); border-radius: var(--radius); box-shadow: 0 20px 50px rgba(0,0,0,.3); width: 420px; max-width: 100%; max-height: calc(100% - 32px); display: flex; flex-direction: column; }
+.modal-head { padding: 16px 20px 6px; font-family: 'Bebas Neue', sans-serif; font-size: 1.35rem; letter-spacing: .6px; }
+.modal-body { padding: 6px 20px 14px; overflow-y: auto; font-size: .88rem; }
+.modal-foot { padding: 12px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.btn { padding: 8px 14px; border-radius: var(--radius-sm); border: 1px solid var(--accent-border); background: var(--accent); color: #fff; font-weight: 600; font-size: .82rem; }
+.btn.sec { background: var(--surface); color: var(--text); border-color: #475569; font-weight: 500; }
+.btn.peligro { background: var(--danger); border-color: #991b1b; }
+.nota { font-size: .78rem; color: var(--muted); margin-top: 8px; line-height: 1.5; }
+#toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(20px); background: var(--accent2); color: #fff; padding: 10px 18px; border-radius: var(--radius-sm); font-size: .85rem; opacity: 0; pointer-events: none; transition: all .25s; z-index: 60; box-shadow: var(--shadow-md); max-width: calc(100% - 32px); text-align: center; }
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast.error { background: var(--danger); }
+</style>
+</head>
+<body>
+
+<!-- 1. ELEGIR ROL (una vez por dispositivo) -->
+<section class="pantalla" id="pt-rol">
+  <div class="caja">
+    <div class="caja-logo"><span data-ico="camara"></span><span class="caja-tit">WebCam</span></div>
+    <div class="caja-sub">¿Qué es este dispositivo?</div>
+    <div class="roles">
+      <button class="rol" type="button" id="rol-tx"><span class="rol-ico" data-ico="camara"></span><span><span class="rol-tit">Cámara</span><br><span class="rol-sub">Este celular queda fijo y transmite (ej. el lavadero)</span></span></button>
+      <button class="rol" type="button" id="rol-rx"><span class="rol-ico" data-ico="ojo"></span><span><span class="rol-tit">Visor</span><br><span class="rol-sub">Con este dispositivo miro las cámaras</span></span></button>
+    </div>
+  </div>
+  <div class="pie-ver" id="pie-ver"></div>
+</section>
+
+<!-- 2. EMPAREJAR CÁMARA -->
+<section class="pantalla" id="pt-emparejar">
+  <div class="caja">
+    <div class="caja-logo"><span data-ico="camara"></span><span class="caja-tit">WebCam</span></div>
+    <div class="caja-sub">Cámara · emparejar este celular (una sola vez)</div>
+    <div class="paso">
+      <div class="enviado">Pedí el código en <b>GOE Admin → WebCam → Emparejar</b> y escribilo acá. Vale 15 minutos.</div>
+      <label for="emp-nombre">Nombre de este celular</label>
+      <input class="inp" id="emp-nombre" maxlength="40" value="Celular">
+      <label for="emp-codigo">Código</label>
+      <input class="inp codigo" id="emp-codigo" inputmode="numeric" maxlength="6" autocomplete="off">
+      <button class="btn-gr" id="emp-btn" type="button">Emparejar</button>
+      <div class="msg" id="emp-msg"></div>
+    </div>
+    <button class="btn-gr sec" type="button" data-cambiar-rol>Este dispositivo es otro (cambiar)</button>
+  </div>
+</section>
+
+<!-- 3. LOGIN VISOR (mismo flujo que M2 y GOE Admin) -->
+<section class="pantalla" id="pt-login">
+  <div class="caja">
+    <div class="caja-logo"><span data-ico="ojo"></span><span class="caja-tit">WebCam</span></div>
+    <div class="caja-sub">Visor · entrar con tu mail</div>
+    <div class="paso" id="login-paso-email">
+      <label for="login-email">Email</label>
+      <input class="inp" id="login-email" type="email" autocomplete="email">
+      <button class="btn-gr" id="login-enviar" type="button">Enviar código</button>
+      <div class="msg" id="login-msg-email"></div>
+    </div>
+    <div class="paso" id="login-paso-codigo" hidden>
+      <div class="enviado">Te mandamos un código a <b id="login-email-enviado"></b>. Revisá también Spam.</div>
+      <label for="login-codigo">Código</label>
+      <input class="inp codigo" id="login-codigo" inputmode="numeric" autocomplete="one-time-code" maxlength="10">
+      <button class="btn-gr" id="login-validar" type="button">Ingresar</button>
+      <button class="btn-gr sec" id="login-volver" type="button">Cambiar email</button>
+      <div class="msg" id="login-msg-codigo"></div>
+    </div>
+    <button class="btn-gr sec" type="button" data-cambiar-rol>Este dispositivo es otro (cambiar)</button>
+  </div>
+</section>
+
+<!-- 4. SIN PERMISO -->
+<section class="pantalla" id="pt-denegado">
+  <div class="caja">
+    <div class="caja-logo" style="color:var(--muted)"><span data-ico="candado"></span></div>
+    <div style="font-weight:600;margin:8px 0">Esta cuenta no tiene acceso a WebCam</div>
+    <div class="enviado" id="denegado-email"></div>
+    <div class="nota">Se habilita en GOE Admin → Personas → Apps (WebCam).</div>
+    <button class="btn-gr sec" type="button" id="denegado-salir">Cerrar sesión</button>
+  </div>
+</section>
+
+<!-- 5. APP CÁMARA (panel de casa) -->
+<div class="app" id="app-tx">
+  <header class="hdr">
+    <span class="hdr-tit">WebCam</span>
+    <span class="hdr-ver" data-version></span>
+    <span class="hdr-nombre" id="tx-hdr-nombre"></span>
+    <span class="hdr-estado" id="tx-hdr-red" title="Conexión en tiempo real"><span class="punto" id="tx-hdr-punto"></span></span>
+    <button class="hb inst" type="button" data-instalar hidden>Instalar</button>
+    <button class="hb" type="button" data-full title="Pantalla completa" data-ico="full"></button>
+    <button class="hb" type="button" id="tx-menu" title="Opciones" data-ico="menu"></button>
+  </header>
+  <main class="tx-panel" id="tx-panel">
+    <div class="tarjeta t-reloj" id="tx-t-reloj">
+      <div class="reloj"><span id="tx-hhmm">--:--</span><span class="seg" id="tx-ss">--</span></div>
+      <div class="fecha" id="tx-fecha"></div>
+    </div>
+    <div class="tarjeta t-clima" id="tx-t-clima">
+      <div class="clima-ico" id="tx-clima-ico" data-ico="sol"></div>
+      <div style="min-width:0">
+        <div class="clima-temp" id="tx-clima-temp">--°</div>
+        <div class="clima-desc" id="tx-clima-desc">Obteniendo el clima…</div>
+        <div class="clima-mm" id="tx-clima-mm"></div>
+      </div>
+    </div>
+    <div class="tarjeta t-cal" id="tx-t-cal">
+      <div class="cal-tit"><b id="tx-cal-nombre">Calendario</b><span id="tx-cal-dia">hoy</span></div>
+      <div class="cal-lista" id="tx-cal-lista"><div class="cal-vacio">Cargando…</div></div>
+    </div>
+    <div class="tarjeta t-cam" id="tx-t-cam">
+      <div class="prev"><video id="tx-video" autoplay muted playsinline></video><div class="prev-nada" id="tx-prev-nada" data-ico="camara"></div></div>
+      <div class="cam-info">
+        <div class="cam-estado"><span class="punto" id="tx-punto"></span><span id="tx-estado">Iniciando…</span></div>
+        <div class="cam-sub" id="tx-sub"></div>
+      </div>
+      <div class="cam-acc">
+        <button class="bp" type="button" id="tx-flip" title="Cambiar de cámara" data-ico="flip" hidden></button>
+        <button class="bp pri" type="button" id="tx-iniciar" hidden><span data-ico="camara"></span><span>Iniciar</span></button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- 6. APP VISOR -->
+<div class="app" id="app-rx">
+  <header class="hdr">
+    <button class="hb" type="button" id="rx-volver" title="Volver a las cámaras" data-ico="atras" hidden></button>
+    <span class="hdr-tit">WebCam</span>
+    <span class="hdr-ver" data-version></span>
+    <span class="hdr-nombre" id="rx-hdr-nombre"></span>
+    <button class="hb inst" type="button" data-instalar hidden>Instalar</button>
+    <button class="hb" type="button" data-full title="Pantalla completa" data-ico="full"></button>
+    <button class="hb" type="button" id="rx-menu" title="Opciones" data-ico="menu"></button>
+  </header>
+  <div class="rx-cuerpo" id="rx-lista-vista">
+    <div class="cams">
+      <div class="rx-tit">Cámaras</div>
+      <div id="rx-lista"><div class="vacio"><span class="spin"></span> Cargando…</div></div>
+      <div class="nota" style="text-align:center">Se actualiza sola. Tocá una cámara para verla en vivo.</div>
+    </div>
+  </div>
+  <div id="rx-ver" hidden>
+    <div class="vid" id="rx-vid">
+      <video id="rx-video" autoplay playsinline muted></video>
+      <div class="vid-estado" id="rx-badge"><span class="punto" id="rx-punto"></span><span id="rx-badge-txt">Conectando…</span></div>
+      <div class="vid-msg" id="rx-msg"></div>
+      <div class="vid-ctrl">
+        <button class="bp" type="button" id="rx-torch" title="Linterna" data-ico="rayo" disabled></button>
+        <button class="bp" type="button" id="rx-flip" title="Cambiar de cámara" data-ico="flip" disabled></button>
+        <button class="bp" type="button" data-full title="Pantalla completa" data-ico="full"></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="modal"><div class="modal" role="dialog" aria-modal="true"><div class="modal-head" id="modal-tit"></div><div class="modal-body" id="modal-body"></div><div class="modal-foot" id="modal-foot"></div></div></div>
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+/* ════════════════════════════════════════════════════════
+   CONFIGURACIÓN
+════════════════════════════════════════════════════════ */
+const VERSION_UI    = 'v5.0.0';
+const SUPABASE_URL  = 'https://uhuftsxrzwhmvzygcuvp.supabase.co';
+const SUPABASE_KEY  = 'sb_publishable_TCibRAnzgaDIbn_MIirw6w_FltKG8X3';
+const REDIRECT_MAIL = 'https://goeapp.github.io/webcam/';   // la plantilla del mail lo usa para poner "WEBCAM"
+const FN_CALENDARIO = 'wc-calendario';
+// Lista ICE: STUN de Google. Para sumar un TURN: { urls: 'turn:…', username: '…', credential: '…' }
+const ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' }
+];
+// Calidad de video por dispositivo (GOE Admin): resolución, cuadros por segundo y tope de bits
+const CALIDAD = {
+  alta:  { w: 1280, h: 720, fps: 24, br: 1500000 },
+  media: { w: 960,  h: 540, fps: 15, br: 700000 },
+  baja:  { w: 640,  h: 360, fps: 10, br: 300000 }
+};
+const LS = { rol: 'wc-rol', email: 'wc-email', nombre: 'wc-tx-nombre', geo: 'wc-geo' };
+const PING_MS = 60000, LISTA_MS = 20000, CLIMA_MS = 30 * 60000, CAL_MS = 15 * 60000;
+const OFERTA_MS = 12000, CAIDA_MS = 10000, SIN_RESPUESTA_MS = 30000;
+
+// Sesión propia de WebCam: todas las PWA viven en goeapp.github.io (mismo localStorage)
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true, storageKey: 'webcam-sb-auth' }
+});
+
+/* ════════════════════════════════════════════════════════
+   ESTADO
+════════════════════════════════════════════════════════ */
+const st = { rol: null, email: '', uid: null, wake: null, timers: [] };
+const tx = { cfg: null, canal: null, rtOk: false, stream: null, facing: 'environment', torch: false,
+             pc: null, dc: null, sesion: null, remotaLista: false, pendientes: [], tCaida: null, tSinResp: null,
+             pausada: false, tReintento: null, estado: 'inactivo', geo: null, calFecha: '' };
+const rx = { camaras: [], cam: null, canal: null, sesion: null, pc: null, dc: null, remotaLista: false, pendientes: [],
+             tOferta: null, tCaida: null, intentos: 0, desplazado: false, torchOn: false, facing: 'environment' };
+let emailPendiente = '';
+
+/* ════════════════════════════════════════════════════════
+   UTILIDADES
+════════════════════════════════════════════════════════ */
+const $ = id => document.getElementById(id);
+const log = (...a) => console.log('[WebCam]', ...a);
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function lsSet(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { /* sin storage */ } }
+function uuid() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); });
+}
+function toast(msg, error) {
+  const t = $('toast'); t.textContent = msg; t.className = error ? 'error show' : 'show';
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.className = error ? 'error' : '', error ? 5000 : 2600);
+}
+function hace(iso) {
+  if (!iso) return 'nunca';
+  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 60) return 'hace ' + s + ' s';
+  if (s < 3600) return 'hace ' + Math.round(s / 60) + ' min';
+  if (s < 86400) return 'hace ' + Math.round(s / 3600) + ' h';
+  return 'hace ' + Math.round(s / 86400) + ' d';
+}
+function hoyISO() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+function textoError(err) {
+  const m = (err && (err.message || err.msg || err.error_description || err.details)) || String(err);
+  if (/JWT|session|token/i.test(m)) return 'La sesión venció. Volvé a entrar.';
+  if (/Failed to fetch|NetworkError|network|Load failed/i.test(m)) return 'Sin conexión con la base.';
+  if (/row-level security|permission denied|42501|Sin permiso/i.test(m)) return 'Sin permiso para esa operación.';
+  if (/Anonymous sign-ins are disabled/i.test(m)) return 'Falta habilitar "Allow anonymous sign-ins" en Supabase (Authentication).';
+  if (/hook/i.test(m)) return 'El hook "Before User Created" de Supabase no dejó crear la sesión anónima del celular: hay que permitir is_anonymous en el hook.';
+  return m;
+}
+async function q(promesa) { const { data, error } = await promesa; if (error) throw error; return data; }
+function evento(nombre, detalle) { sb.rpc('wc_log_evento', { p_evento: nombre, p_detalle: detalle || null }).then(() => {}, () => {}); }
+
+// Íconos SVG (no dependen de las fuentes del dispositivo)
+const ICO_PATHS = {
+  camara: '<path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>',
+  ojo:    '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
+  candado:'<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  full:   '<path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/>',
+  salir:  '<path d="M3 8h5V3M21 8h-5V3M3 16h5v5M21 16h-5v5"/>',
+  menu:   '<circle cx="12" cy="5" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="19" r="1.4" fill="currentColor"/>',
+  atras:  '<path d="M15 18l-6-6 6-6"/>',
+  flip:   '<path d="M20 7h-3.5l-1.5-2H9L7.5 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/><path d="M9 13a3 3 0 0 1 5.2-2M15 13a3 3 0 0 1-5.2 2"/><path d="M14.5 9.5v1.7h-1.7M9.5 16.5v-1.7h1.7"/>',
+  rayo:   '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+  sol:    '<circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2 12h2M20 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/>',
+  nube:   '<path d="M17.5 19H8a5 5 0 1 1 1-9.9A6 6 0 0 1 20.5 12 3.5 3.5 0 0 1 17.5 19z"/>',
+  lluvia: '<path d="M17.5 15H8a5 5 0 1 1 1-9.9A6 6 0 0 1 20.5 8 3.5 3.5 0 0 1 17.5 15z"/><path d="M8 18l-1 3M12 18l-1 3M16 18l-1 3"/>',
+  tormenta:'<path d="M17.5 14H8a5 5 0 1 1 1-9.9A6 6 0 0 1 20.5 7 3.5 3.5 0 0 1 17.5 14z"/><path d="M12 14l-2 4h4l-2 4"/>',
+  niebla: '<path d="M4 9h16M2 13h20M5 17h14"/>',
+  nieve:  '<path d="M12 2v20M4.9 6.5l14.2 11M4.9 17.5l14.2-11"/>',
+};
+const ico = n => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${ICO_PATHS[n] || ''}</svg>`;
+function pintarIconos(raiz) { (raiz || document).querySelectorAll('[data-ico]').forEach(el => { el.innerHTML = ico(el.dataset.ico); }); }
+
+function pantalla(cual) {
+  document.querySelectorAll('.pantalla').forEach(p => p.classList.toggle('activa', p.id === 'pt-' + cual));
+  $('app-tx').classList.toggle('activa', cual === 'tx');
+  $('app-rx').classList.toggle('activa', cual === 'rx');
+}
+function msg(id, tipo, texto) { const el = $(id); el.className = 'msg ' + (tipo || ''); el.textContent = texto || ''; }
+
+/* ── Modal (de M2) ── */
+function abrirModal({ titulo, html, botones }) {
+  return new Promise(resolve => {
+    $('modal-tit').innerHTML = titulo; $('modal-body').innerHTML = html;
+    const foot = $('modal-foot'); foot.innerHTML = '';
+    const cerrar = v => { $('modal').classList.remove('abierto'); document.removeEventListener('keydown', teclas); resolve(v); };
+    botones.forEach(b => {
+      const el = document.createElement('button'); el.type = 'button'; el.className = 'btn ' + (b.clase || ''); el.textContent = b.texto;
+      el.onclick = () => cerrar(b.valor); foot.appendChild(el);
+    });
+    const teclas = e => { if (e.key === 'Escape') cerrar(false); };
+    document.addEventListener('keydown', teclas);
+    $('modal').onclick = e => { if (e.target.id === 'modal') cerrar(false); };
+    $('modal').classList.add('abierto');
+  });
+}
+function confirmar(titulo, html, textoOk, peligro) {
+  return abrirModal({ titulo, html, botones: [{ texto: 'Cancelar', clase: 'sec', valor: false }, { texto: textoOk || 'Confirmar', clase: peligro ? 'peligro' : '', valor: true }] });
+}
+
+/* ════════════════════════════════════════════════════════
+   ARRANQUE: rol + sesión
+════════════════════════════════════════════════════════ */
+async function arrancar() {
+  // Restos de la v4.7 (token por URL)
+  if (location.search.indexOf('token=') >= 0) history.replaceState(null, '', location.pathname);
+  lsSet('wcdms_token', null);
+  st.rol = lsGet(LS.rol);
+  const { data } = await sb.auth.getSession();
+  const ses = data.session;
+  if (st.rol === 'tx') {
+    if (ses && ses.user.is_anonymous) return entrarTx(ses);
+    return mostrarEmparejar();
+  }
+  if (st.rol === 'rx') {
+    if (ses && !ses.user.is_anonymous) return entrarRx(ses);
+    return mostrarLogin();
+  }
+  pantalla('rol');
+}
+async function cambiarRol() {
+  try { await sb.auth.signOut({ scope: 'local' }); } catch (e) { log('signOut', e); }
+  lsSet(LS.rol, null); st.rol = null;
+  pantalla('rol');
+}
+function elegirRol(rol) {
+  st.rol = rol; lsSet(LS.rol, rol);
+  if (rol === 'tx') mostrarEmparejar(); else mostrarLogin();
+}
+function limpiarTimers() { st.timers.forEach(clearInterval); st.timers = []; }
+
+/* ════════════════════════════════════════════════════════
+   VISOR — LOGIN (mismo flujo que M2 / GOE Admin)
+════════════════════════════════════════════════════════ */
+function pasoLogin(p) { $('login-paso-email').hidden = p !== 'email'; $('login-paso-codigo').hidden = p !== 'codigo'; }
+function traducirErrorAuth(err) {
+  const m = (err && (err.message || err.msg)) || String(err);
+  if (/rate limit|too many|security purposes/i.test(m)) return 'Demasiados pedidos de código seguidos. Esperá un minuto y probá de nuevo.';
+  if (/expired|invalid/i.test(m)) return 'Código incorrecto o vencido.';
+  return textoError(err);
+}
+function mostrarLogin(aviso) {
+  pantalla('login');
+  if (!$('login-email').value) $('login-email').value = lsGet(LS.email) || '';
+  pasoLogin('email');
+  msg('login-msg-email', aviso ? 'info' : '', aviso || '');
+}
+async function enviarCodigo() {
+  const email = $('login-email').value.trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { msg('login-msg-email', 'error', 'Ingresá un email válido.'); return; }
+  $('login-enviar').disabled = true; msg('login-msg-email', 'info', 'Enviando código…');
+  const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: REDIRECT_MAIL } });
+  $('login-enviar').disabled = false;
+  if (error) { console.error('[WebCam signInWithOtp]', error); msg('login-msg-email', 'error', traducirErrorAuth(error)); return; }
+  emailPendiente = email; lsSet(LS.email, email);
+  msg('login-msg-email', '', ''); msg('login-msg-codigo', '', '');
+  $('login-email-enviado').textContent = email; $('login-codigo').value = '';
+  pasoLogin('codigo'); $('login-codigo').focus();
+}
+async function validarCodigo() {
+  const token = $('login-codigo').value.replace(/\D/g, '');
+  if (token.length < 6) { msg('login-msg-codigo', 'error', 'El código tiene al menos 6 dígitos.'); return; }
+  $('login-validar').disabled = true; msg('login-msg-codigo', 'info', 'Validando…');
+  const { data, error } = await sb.auth.verifyOtp({ email: emailPendiente, token, type: 'email' });
+  $('login-validar').disabled = false;
+  if (error) { console.error('[WebCam verifyOtp]', error); msg('login-msg-codigo', 'error', traducirErrorAuth(error)); return; }
+  msg('login-msg-codigo', '', '');
+  await entrarRx(data.session);
+}
+async function entrarRx(ses) {
+  st.email = (ses.user.email || '').toLowerCase(); st.uid = ses.user.id;
+  let ok;
+  try { ok = await q(sb.rpc('wc_es_visor')); }
+  catch (e) {
+    console.error('[WebCam wc_es_visor]', e);
+    if (/conexión/.test(textoError(e))) { pantalla('rx'); iniciarRx(); toast('Sin conexión: reintentando…', true); return; }
+    mostrarLogin(); msg('login-msg-email', 'error', 'No se pudo verificar el acceso: ' + textoError(e)); return;
+  }
+  if (ok !== true) { pantalla('denegado'); $('denegado-email').textContent = st.email; return; }
+  pantalla('rx');
+  iniciarRx();
+}
+
+/* ════════════════════════════════════════════════════════
+   CÁMARA — EMPAREJAR (patrón M2)
+════════════════════════════════════════════════════════ */
+function mostrarEmparejar(aviso) {
+  pantalla('emparejar');
+  $('emp-nombre').value = lsGet(LS.nombre) || 'Celular';
+  $('emp-codigo').value = '';
+  msg('emp-msg', aviso ? 'info' : '', aviso || '');
+}
+async function emparejar() {
+  if ($('emp-btn').disabled) return;
+  const codigo = $('emp-codigo').value.replace(/\D/g, '');
+  const nombre = $('emp-nombre').value.trim() || 'Celular';
+  if (codigo.length !== 6) { msg('emp-msg', 'error', 'El código tiene 6 dígitos.'); return; }
+  $('emp-btn').disabled = true; msg('emp-msg', 'info', 'Emparejando…');
+  try {
+    let { data } = await sb.auth.getSession();
+    if (!data.session || !data.session.user.is_anonymous) {
+      const r = await sb.auth.signInAnonymously();
+      if (r.error) throw r.error;
+      data = { session: r.data.session };
+    }
+    const res = await q(sb.rpc('wc_emparejar', { p_codigo: codigo, p_nombre: nombre, p_agente: navigator.userAgent }));
+    if (!res || !res.ok) { msg('emp-msg', 'error', 'Código incorrecto o vencido. Pedí uno nuevo.'); return; }
+    lsSet(LS.nombre, nombre);
+    msg('emp-msg', 'ok', '¡Emparejado con ' + res.nombre_camara + '!');
+    const s = await sb.auth.getSession();
+    await entrarTx(s.data.session);
+  } catch (e) {
+    console.error('[WebCam emparejar]', e);
+    msg('emp-msg', 'error', textoError(e));
+  } finally { $('emp-btn').disabled = false; }
+}
+
+/* ════════════════════════════════════════════════════════
+   CÁMARA — APP
+════════════════════════════════════════════════════════ */
+async function ping(estado) {
+  try {
+    const cfg = await q(sb.rpc('wc_ping', { p_estado: estado || tx.estado }));
+    return cfg === null ? null : cfg;
+  } catch (e) { log('ping', textoError(e)); return undefined; }   // undefined = sin red (se mantiene lo que había)
+}
+async function entrarTx(ses) {
+  st.uid = ses.user.id;
+  const cfg = await ping('inactivo');
+  if (cfg === null) { mostrarEmparejar('Este celular no está emparejado (o lo desemparejaron desde GOE Admin).'); return; }
+  pantalla('tx');
+  tx.cfg = cfg || tx.cfg || { nombre_camara: '…', autoarranque: true, camara_inicial: 'trasera', mostrar_reloj: true, mostrar_clima: true, mostrar_calendario: false, calidad: 'media' };
+  tx.facing = tx.cfg.camara_inicial === 'frontal' ? 'user' : 'environment';
+  aplicarPanel();
+  limpiarTimers();
+  tickReloj(); st.timers.push(setInterval(tickReloj, 1000));
+  st.timers.push(setInterval(pingPeriodico, PING_MS));
+  st.timers.push(setInterval(actualizarClima, CLIMA_MS));
+  st.timers.push(setInterval(() => actualizarCalendario(), CAL_MS));
+  actualizarClima();
+  actualizarCalendario();
+  conectarCanalTx();
+  pedirWakeLock();
+  sb.rpc('wc_limpiar').then(() => {}, () => {});
+  if (tx.cfg.camara_activa === false) estadoTx('apagada', 'La cámara está desactivada en GOE Admin');
+  else if (tx.cfg.autoarranque && !tx.pausada) iniciarCamara();
+  else estadoTx('inactivo', 'Tocá Iniciar para transmitir');
+}
+async function pingPeriodico() {
+  const cfg = await ping();
+  if (cfg === null) { salirTx(); mostrarEmparejar('Este celular fue desemparejado desde GOE Admin.'); return; }
+  if (cfg) aplicarConfig(cfg);
+  if (!tx.rtOk) conectarCanalTx();
+}
+function aplicarPanel() {
+  const c = tx.cfg;
+  $('tx-hdr-nombre').textContent = c.nombre_camara + (c.nombre ? ' · ' + c.nombre : '');
+  $('tx-t-reloj').hidden = c.mostrar_reloj === false;
+  $('tx-t-clima').hidden = c.mostrar_clima === false;
+  $('tx-t-cal').hidden = !c.mostrar_calendario;
+  $('tx-panel').classList.toggle('sin-cal', !c.mostrar_calendario);
+  $('tx-cal-nombre').textContent = c.calendario || 'Calendario';
+}
+// Cambios de configuración (GOE Admin → Realtime o ping)
+function aplicarConfig(nueva) {
+  const vieja = tx.cfg || {};
+  tx.cfg = nueva;
+  aplicarPanel();
+  if (nueva.mostrar_calendario && (!vieja.mostrar_calendario || vieja.calendario !== nueva.calendario)) actualizarCalendario();
+  if (nueva.mostrar_clima && vieja.mostrar_clima === false) actualizarClima();
+  if (nueva.camara_activa === false) { if (tx.stream || tx.pc) detenerCamara('apagada'); estadoTx('apagada', 'La cámara está desactivada en GOE Admin'); return; }
+  if (vieja.camara_activa === false && nueva.autoarranque) { iniciarCamara(); return; }
+  if (tx.stream && (vieja.calidad !== nueva.calidad || vieja.camara_inicial !== nueva.camara_inicial)) {
+    if (vieja.camara_inicial !== nueva.camara_inicial) tx.facing = nueva.camara_inicial === 'frontal' ? 'user' : 'environment';
+    reabrirCamara();
+  } else if (!tx.stream && nueva.autoarranque && !vieja.autoarranque && !tx.pausada) iniciarCamara();
+}
+
+/* ── Realtime: señales de los visores + cambios de configuración ── */
+function conectarCanalTx() {
+  if (tx.canal) { try { sb.removeChannel(tx.canal); } catch (e) { /* nada */ } tx.canal = null; }
+  if (!tx.cfg || !tx.cfg.camara_id) return;
+  puntoRed('esp');
+  tx.canal = sb.channel('wc-tx-' + tx.cfg.camara_id)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wc_senales', filter: 'camara_id=eq.' + tx.cfg.camara_id }, p => {
+      try { onSenalTx(p.new); } catch (e) { console.error('[WebCam señal]', e); }
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'wc_dispositivos', filter: 'auth_uid=eq.' + st.uid }, async () => {
+      const cfg = await ping();
+      if (cfg === null) { salirTx(); mostrarEmparejar('Este celular fue desemparejado desde GOE Admin.'); return; }
+      if (cfg) { aplicarConfig(cfg); toast('Configuración actualizada'); }
+    })
+    .subscribe(status => {
+      log('rt', status);
+      if (status === 'SUBSCRIBED') { tx.rtOk = true; puntoRed('ok'); }
+      else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        tx.rtOk = false; puntoRed('err');
+        clearTimeout(conectarCanalTx._t); conectarCanalTx._t = setTimeout(() => { if (st.rol === 'tx' && document.visibilityState === 'visible') conectarCanalTx(); }, 8000);
+      }
+    });
+}
+function puntoRed(tipo) {
+  $('tx-hdr-punto').className = 'punto ' + tipo;
+  $('tx-hdr-red').title = tipo === 'ok' ? 'Conectado (tiempo real)' : tipo === 'err' ? 'Sin conexión en tiempo real: reintentando' : 'Conectando…';
+}
+function enviarTx(sesion, tipo, datos) {
+  return sb.from('wc_senales').insert({ camara_id: tx.cfg.camara_id, sesion, de: 'tx', tipo, datos: datos || {} })
+    .then(r => { if (r && r.error) log('enviar', tipo, r.error.message); }, e => log('enviar', tipo, e));
+}
+function estadoTx(estado, sub) {
+  const txt = { inactivo: 'Cámara detenida', esperando: 'Esperando visor', transmitiendo: 'Transmitiendo', error: 'Sin cámara', apagada: 'Cámara desactivada', conectando: 'Conectando visor…' };
+  const pt = { inactivo: '', esperando: 'esp', transmitiendo: 'ok', error: 'err', apagada: '', conectando: 'esp' };
+  $('tx-estado').textContent = txt[estado] || estado;
+  $('tx-punto').className = 'punto ' + (pt[estado] || '');
+  $('tx-sub').textContent = sub || '';
+  $('tx-iniciar').hidden = !!tx.stream || estado === 'apagada';
+  $('tx-flip').hidden = !tx.stream;
+  $('tx-prev-nada').hidden = !!tx.stream;
+  const base = estado === 'transmitiendo' ? 'transmitiendo' : (tx.stream ? 'esperando' : 'inactivo');
+  if (base !== tx.estado) { tx.estado = base; ping(base); }
+}
+
+/* ── Cámara local ── */
+async function abrirStream() {
+  const c = CALIDAD[tx.cfg.calidad] || CALIDAD.media;
+  return navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: tx.facing }, width: { ideal: c.w }, height: { ideal: c.h }, frameRate: { ideal: c.fps, max: c.fps } },
+    audio: false
+  });
+}
+async function iniciarCamara() {
+  if (tx.stream || tx.cfg.camara_activa === false) return;
+  clearTimeout(tx.tReintento);
+  tx.pausada = false;
+  estadoTx('inactivo', 'Abriendo la cámara…');
+  try {
+    tx.stream = await abrirStream();
+  } catch (e) {
+    console.error('[WebCam getUserMedia]', e);
+    tx.stream = null;
+    const per = e && e.name === 'NotAllowedError';
+    estadoTx('error', per ? 'Falta el permiso de cámara: tocá Iniciar y aceptá' : 'No se pudo abrir la cámara: ' + (e.message || e.name));
+    evento('camara_error', { error: String(e && (e.name + ': ' + e.message)) });
+    if (!per && tx.cfg.autoarranque) tx.tReintento = setTimeout(iniciarCamara, 15000);
+    return;
+  }
+  vincularStream();
+  estadoTx('esperando', tx.cfg.nombre_camara + ' · lista para el visor');
+  log('cámara abierta');
+}
+function vincularStream() {
+  const v = $('tx-video'); v.srcObject = tx.stream;
+  const track = tx.stream.getVideoTracks()[0];
+  if (track) {
+    try { const caps = track.getCapabilities ? track.getCapabilities() : {}; tx.torch = !!(caps && caps.torch); } catch (e) { tx.torch = false; }
+    track.onended = () => {   // la cámara se cortó (otra app, el sistema): se reabre sola
+      if (tx.stream && tx.stream.getVideoTracks()[0] === track) { log('track ended'); reabrirCamara(); }
+    };
+  }
+}
+async function reabrirCamara() {
+  const viejo = tx.stream;
+  if (viejo) viejo.getTracks().forEach(t => { t.onended = null; t.stop(); });
+  try {
+    tx.stream = await abrirStream();
+  } catch (e) {
+    tx.stream = null;
+    estadoTx('error', 'No se pudo reabrir la cámara: ' + (e.message || e.name));
+    if (tx.pc) cerrarPeerTx('sin_camara');
+    if (tx.cfg.autoarranque) { clearTimeout(tx.tReintento); tx.tReintento = setTimeout(iniciarCamara, 15000); }
+    return false;
+  }
+  vincularStream();
+  if (tx.pc) {
+    const track = tx.stream.getVideoTracks()[0];
+    const sender = tx.pc.getSenders().find(s => s.track === null || (s.track && s.track.kind === 'video'));
+    if (sender) { try { await sender.replaceTrack(track); aplicarBitrate(); } catch (e) { log('replaceTrack', e); } }
+  }
+  enviarCaps();
+  estadoTx(tx.pc && tx.pc.connectionState === 'connected' ? 'transmitiendo' : 'esperando', tx.facing === 'user' ? 'Cámara frontal' : 'Cámara trasera');
+  return true;
+}
+async function cambiarCamara() {
+  if (!tx.stream) return;
+  if (tx.torchOn) aplicarTorch(false);
+  tx.facing = tx.facing === 'environment' ? 'user' : 'environment';
+  const ok = await reabrirCamara();
+  if (!ok) tx.facing = tx.facing === 'environment' ? 'user' : 'environment';
+  else toast(tx.facing === 'user' ? 'Cámara frontal' : 'Cámara trasera');
+}
+function detenerCamara(motivo) {
+  clearTimeout(tx.tReintento);
+  if (tx.pc) { if (tx.sesion) enviarTx(tx.sesion, 'bye', { motivo: motivo || 'detenida' }); cerrarPeerTx(null); }
+  if (tx.stream) { tx.stream.getTracks().forEach(t => { t.onended = null; t.stop(); }); tx.stream = null; }
+  $('tx-video').srcObject = null;
+  estadoTx('inactivo', 'Tocá Iniciar para transmitir');
+}
+function aplicarTorch(valor) {
+  const track = tx.stream && tx.stream.getVideoTracks()[0];
+  if (!track) return;
+  tx.torchOn = !!valor;
+  try { track.applyConstraints({ advanced: [{ torch: !!valor }] }).catch(() => {}); } catch (e) { /* sin linterna */ }
+}
+
+/* ── WebRTC: un solo visor; el último desplaza al anterior ── */
+function onSenalTx(r) {
+  if (!r || r.de !== 'rx') return;
+  if (r.tipo === 'hola') { atenderHola(r.sesion); return; }
+  if (!tx.pc || r.sesion !== tx.sesion) return;
+  if (r.tipo === 'answer') {
+    if (tx.pc.signalingState !== 'have-local-offer') return;
+    tx.pc.setRemoteDescription(r.datos).then(() => {
+      tx.remotaLista = true;
+      const p = tx.pendientes; tx.pendientes = [];
+      p.forEach(c => tx.pc.addIceCandidate(c).catch(e => log('ice', e)));
+    }).catch(e => log('answer', e));
+  } else if (r.tipo === 'cand') {
+    if (tx.remotaLista) tx.pc.addIceCandidate(r.datos).catch(e => log('ice', e));
+    else tx.pendientes.push(r.datos);
+  } else if (r.tipo === 'bye') {
+    cerrarPeerTx(null);
+    estadoTx('esperando', 'El visor se desconectó');
+  }
+}
+async function atenderHola(sesion) {
+  if (tx.cfg.camara_activa === false) { enviarTx(sesion, 'bye', { motivo: 'apagada' }); return; }
+  if (!tx.stream) {
+    if (!tx.pausada) await iniciarCamara();
+    if (!tx.stream) { enviarTx(sesion, 'bye', { motivo: tx.pausada ? 'pausada' : 'sin_camara' }); return; }
+  }
+  if (tx.sesion && tx.sesion !== sesion && tx.pc) {
+    enviarTx(tx.sesion, 'bye', { motivo: 'desplazado' });
+    evento('desplazado', { anterior: tx.sesion, nuevo: sesion });
+  }
+  cerrarPeerTx(null);
+  tx.sesion = sesion; tx.remotaLista = false; tx.pendientes = [];
+  const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  tx.pc = pc;
+  const dc = pc.createDataChannel('control');
+  configurarDcTx(dc);
+  tx.stream.getTracks().forEach(t => pc.addTrack(t, tx.stream));
+  pc.onicecandidate = e => { if (e.candidate && pc === tx.pc) enviarTx(sesion, 'cand', e.candidate.toJSON()); };
+  pc.onconnectionstatechange = () => {
+    if (pc !== tx.pc) return;
+    const s = pc.connectionState;
+    log('tx pc', s);
+    if (s === 'connected') {
+      clearTimeout(tx.tCaida); clearTimeout(tx.tSinResp);
+      estadoTx('transmitiendo', 'Un visor está mirando');
+      aplicarBitrate();
+      evento('visor_conectado', { sesion });
+    } else if (s === 'failed') {
+      evento('peer_fallo', { sesion, estado: s });
+      cerrarPeerTx(null); estadoTx('esperando', 'Se cortó el visor: espera que se reconecte');
+    } else if (s === 'disconnected') {
+      clearTimeout(tx.tCaida);
+      tx.tCaida = setTimeout(() => { if (pc === tx.pc && pc.connectionState !== 'connected') { cerrarPeerTx(null); estadoTx('esperando', 'Se cortó el visor: espera que se reconecte'); } }, CAIDA_MS * 1.5);
+    }
+  };
+  estadoTx('conectando', 'Un visor quiere mirar');
+  try {
+    const oferta = await pc.createOffer();
+    await pc.setLocalDescription(oferta);
+    if (pc !== tx.pc) return;
+    await enviarTx(sesion, 'offer', { type: oferta.type, sdp: oferta.sdp });
+  } catch (e) { console.error('[WebCam offer]', e); cerrarPeerTx(null); estadoTx('esperando', 'No se pudo preparar la conexión'); return; }
+  clearTimeout(tx.tSinResp);
+  tx.tSinResp = setTimeout(() => { if (pc === tx.pc && pc.connectionState !== 'connected') { cerrarPeerTx(null); estadoTx('esperando', tx.cfg.nombre_camara + ' · lista para el visor'); } }, SIN_RESPUESTA_MS);
+}
+function cerrarPeerTx() {
+  clearTimeout(tx.tCaida); clearTimeout(tx.tSinResp);
+  if (tx.dc) { try { tx.dc.close(); } catch (e) { /* nada */ } tx.dc = null; }
+  if (tx.pc) { const pc = tx.pc; tx.pc = null; try { pc.close(); } catch (e) { /* nada */ } }
+  if (tx.torchOn) aplicarTorch(false);
+  tx.sesion = null; tx.remotaLista = false; tx.pendientes = [];
+}
+function aplicarBitrate() {
+  if (!tx.pc) return;
+  const c = CALIDAD[tx.cfg.calidad] || CALIDAD.media;
+  tx.pc.getSenders().forEach(s => {
+    if (!s.track || s.track.kind !== 'video' || !s.getParameters) return;
+    try {
+      const p = s.getParameters();
+      if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+      p.encodings[0].maxBitrate = c.br;
+      s.setParameters(p).catch(() => {});
+    } catch (e) { /* navegador viejo */ }
+  });
+}
+// DataChannel: linterna y cambio de cámara a distancia (de la v4.7)
+function configurarDcTx(dc) {
+  tx.dc = dc;
+  dc.onopen = () => enviarCaps();
+  dc.onmessage = e => {
+    let m; try { m = JSON.parse(e.data); } catch (x) { return; }
+    if (m.cmd === 'torch') aplicarTorch(!!m.value);
+    else if (m.cmd === 'flipCamera') cambiarCamara();
+  };
+}
+function enviarCaps() {
+  if (tx.dc && tx.dc.readyState === 'open') {
+    try { tx.dc.send(JSON.stringify({ cmd: 'caps', facing: tx.facing, torch: tx.torch && tx.facing === 'environment', torchOn: tx.torchOn })); } catch (e) { /* nada */ }
+  }
+}
+function salirTx() {
+  limpiarTimers();
+  detenerCamara('desemparejado');
+  if (tx.canal) { try { sb.removeChannel(tx.canal); } catch (e) { /* nada */ } tx.canal = null; }
+  soltarWakeLock();
+}
+
+/* ── Panel de casa: reloj, clima, calendario ── */
+function tickReloj() {
+  const d = new Date();
+  $('tx-hhmm').textContent = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  $('tx-ss').textContent = String(d.getSeconds()).padStart(2, '0');
+  let f = d.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' });
+  f = f.charAt(0).toUpperCase() + f.slice(1);
+  if ($('tx-fecha').textContent !== f) $('tx-fecha').textContent = f;
+  if (tx.calFecha && tx.calFecha !== hoyISO()) actualizarCalendario();   // pasó la medianoche
+}
+const WMO = {
+  0: ['Despejado', 'sol'], 1: ['Mayormente despejado', 'sol'], 2: ['Parcialmente nublado', 'nube'], 3: ['Nublado', 'nube'],
+  45: ['Neblina', 'niebla'], 48: ['Neblina con escarcha', 'niebla'],
+  51: ['Llovizna leve', 'lluvia'], 53: ['Llovizna', 'lluvia'], 55: ['Llovizna intensa', 'lluvia'],
+  61: ['Lluvia leve', 'lluvia'], 63: ['Lluvia', 'lluvia'], 65: ['Lluvia intensa', 'lluvia'],
+  71: ['Nevada leve', 'nieve'], 73: ['Nevada', 'nieve'], 75: ['Nevada intensa', 'nieve'],
+  80: ['Chaparrones', 'lluvia'], 81: ['Chaparrones fuertes', 'lluvia'], 82: ['Chaparrones violentos', 'lluvia'],
+  95: ['Tormenta', 'tormenta'], 96: ['Tormenta con granizo', 'tormenta'], 99: ['Tormenta severa', 'tormenta']
+};
+async function ubicacion() {
+  if (tx.geo) return tx.geo;
+  try { const g = JSON.parse(lsGet(LS.geo) || 'null'); if (g && Date.now() - g.t < 7 * 86400000) { tx.geo = g; return g; } } catch (e) { /* nada */ }
+  const pos = await new Promise((res, rej) => {
+    if (!navigator.geolocation) return rej(new Error('sin GPS'));
+    navigator.geolocation.getCurrentPosition(res, rej, { timeout: 10000, maximumAge: 3600000 });
+  });
+  tx.geo = { lat: pos.coords.latitude.toFixed(3), lon: pos.coords.longitude.toFixed(3), t: Date.now() };
+  lsSet(LS.geo, JSON.stringify(tx.geo));
+  return tx.geo;
+}
+async function actualizarClima() {
+  if (!tx.cfg || tx.cfg.mostrar_clima === false) return;
+  let g;
+  try { g = await ubicacion(); }
+  catch (e) { $('tx-clima-temp').textContent = '--°'; $('tx-clima-desc').textContent = 'Ubicación no disponible'; $('tx-clima-mm').textContent = 'Permití la ubicación para ver el clima'; return; }
+  try {
+    const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + g.lat + '&longitude=' + g.lon +
+      '&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=1';
+    const r = await fetch(url); const d = await r.json();
+    const w = WMO[d.current.weather_code] || ['Condición ' + d.current.weather_code, 'nube'];
+    $('tx-clima-temp').textContent = Math.round(d.current.temperature_2m) + '°';
+    $('tx-clima-desc').textContent = w[0];
+    $('tx-clima-ico').innerHTML = ico(w[1]);
+    const dl = d.daily || {};
+    const pr = dl.precipitation_probability_max && dl.precipitation_probability_max[0];
+    $('tx-clima-mm').textContent = dl.temperature_2m_max ? 'Máx ' + Math.round(dl.temperature_2m_max[0]) + '° · Mín ' + Math.round(dl.temperature_2m_min[0]) + '°' + (pr != null ? ' · Lluvia ' + pr + '%' : '') : '';
+  } catch (e) { $('tx-clima-desc').textContent = 'Sin datos del clima'; log('clima', e); }
+}
+async function actualizarCalendario() {
+  if (!tx.cfg || !tx.cfg.mostrar_calendario) return;
+  const fecha = hoyISO();
+  const lista = $('tx-cal-lista');
+  $('tx-cal-dia').textContent = new Date().toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric' });
+  try {
+    const { data, error } = await sb.functions.invoke(FN_CALENDARIO, { body: { fecha } });
+    if (error) throw error;
+    if (!data || !data.ok) throw new Error((data && data.error) || 'sin respuesta');
+    tx.calFecha = fecha;
+    if (data.calendario) $('tx-cal-nombre').textContent = data.calendario;
+    const evs = data.eventos || [];
+    lista.innerHTML = evs.length ? evs.map(e => {
+      const hora = e.todo_el_dia ? '<span class="cal-hora td">Todo el día</span>'
+        : '<span class="cal-hora">' + (e.inicio ? esc(e.inicio) : '…' + (e.fin ? esc(e.fin) : '')) + '</span>';
+      return '<div class="cal-ev">' + hora + '<div class="cal-txt"><div class="cal-titulo">' + esc(e.titulo) + '</div>' +
+        (e.lugar ? '<div class="cal-lugar">' + esc(e.lugar) + '</div>' : '') + '</div></div>';
+    }).join('') : '<div class="cal-vacio">Sin eventos hoy.</div>';
+  } catch (e) {
+    log('calendario', e);
+    if (!tx.calFecha) lista.innerHTML = '<div class="cal-vacio">No se pudo leer el calendario. Se reintenta solo.</div>';
+  }
+}
+
+/* ════════════════════════════════════════════════════════
+   VISOR — APP
+════════════════════════════════════════════════════════ */
+function iniciarRx() {
+  $('rx-hdr-nombre').textContent = st.email;
+  limpiarTimers();
+  mostrarListaRx();
+  st.timers.push(setInterval(() => { if (!rx.cam) cargarCamaras(); }, LISTA_MS));
+}
+async function cargarCamaras() {
+  try {
+    rx.camaras = await q(sb.rpc('wc_camaras_visor'));
+    pintarCamaras();
+  } catch (e) {
+    log('camaras', textoError(e));
+    if (!rx.camaras.length) $('rx-lista').innerHTML = '<div class="vacio">No se pudieron cargar las cámaras: ' + esc(textoError(e)) + '</div>';
+  }
+}
+function infoCamara(c) {
+  if (!c.dispositivo) return { chip: '<span class="chip">sin celular</span>', on: false, det: 'Falta emparejar un celular' };
+  if (!c.en_linea) return { chip: '<span class="chip err">sin señal</span>', on: false, det: esc(c.dispositivo) + ' · visto ' + hace(c.ultimo_visto) };
+  if (c.estado === 'transmitiendo') return { chip: '<span class="chip warn">con un visor</span>', on: true, det: esc(c.dispositivo) + ' · si entrás, lo desplazás' };
+  if (c.estado === 'esperando') return { chip: '<span class="chip ok">en línea</span>', on: true, det: esc(c.dispositivo) };
+  return { chip: '<span class="chip">cámara detenida</span>', on: true, det: esc(c.dispositivo) + ' · se enciende al conectar' };
+}
+function pintarCamaras() {
+  const el = $('rx-lista');
+  if (!rx.camaras.length) { el.innerHTML = '<div class="vacio">No hay cámaras cargadas (se cargan en GOE Admin → WebCam).</div>'; return; }
+  el.innerHTML = '<div style="display:flex;flex-direction:column;gap:10px">' + rx.camaras.map((c, i) => {
+    const inf = infoCamara(c);
+    return '<button class="cam" type="button" data-cam="' + i + '"><span class="cam-ico ' + (inf.on ? 'on' : '') + '">' + ico('camara') + '</span>' +
+      '<span style="min-width:0;flex:1"><span class="cam-nom">' + esc(c.nombre) + '</span> ' + inf.chip + '<br><span class="cam-det">' + inf.det + '</span></span>' +
+      '<span style="color:var(--muted)">›</span></button>';
+  }).join('') + '</div>';
+  el.querySelectorAll('[data-cam]').forEach(b => b.onclick = () => verCamara(rx.camaras[+b.dataset.cam]));
+}
+function mostrarListaRx() {
+  $('rx-lista-vista').hidden = false; $('rx-ver').hidden = true; $('rx-volver').hidden = true;
+  $('rx-hdr-nombre').textContent = st.email;
+  cargarCamaras();
+}
+
+/* ── Ver una cámara ── */
+function verCamara(cam) {
+  rx.cam = cam; rx.intentos = 0; rx.desplazado = false;
+  $('rx-lista-vista').hidden = true; $('rx-ver').hidden = false; $('rx-volver').hidden = false;
+  $('rx-hdr-nombre').textContent = cam.nombre;
+  $('rx-video').srcObject = null;
+  controlesRx(false);
+  mensajeRx('<span class="spin claro"></span><b>Conectando con ' + esc(cam.nombre) + '…</b>');
+  estadoRx('esp', 'Conectando…');
+  conectarCanalRx(() => nuevaSesionRx());
+}
+function conectarCanalRx(alSuscribir) {
+  if (rx.canal) { try { sb.removeChannel(rx.canal); } catch (e) { /* nada */ } rx.canal = null; }
+  const cam = rx.cam; if (!cam) return;
+  let primera = true;
+  rx.canal = sb.channel('wc-rx-' + cam.id + '-' + uuid().slice(0, 8))
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wc_senales', filter: 'camara_id=eq.' + cam.id }, p => {
+      try { onSenalRx(p.new); } catch (e) { console.error('[WebCam señal rx]', e); }
+    })
+    .subscribe(status => {
+      log('rt rx', status);
+      if (status === 'SUBSCRIBED') { if (primera && alSuscribir) { primera = false; alSuscribir(); } }
+      else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        if (rx.cam !== cam) return;
+        clearTimeout(conectarCanalRx._t);
+        conectarCanalRx._t = setTimeout(() => { if (rx.cam === cam && !rx.desplazado) conectarCanalRx(() => nuevaSesionRx('reconectar')); }, 5000);
+      }
+    });
+}
+function enviarRx(tipo, datos, sesion) {
+  return sb.from('wc_senales').insert({ camara_id: rx.cam.id, sesion: sesion || rx.sesion, de: 'rx', tipo, datos: datos || {} })
+    .then(r => { if (r && r.error) log('enviar rx', tipo, r.error.message); }, e => log('enviar rx', tipo, e));
+}
+function nuevaSesionRx(motivo) {
+  if (!rx.cam || rx.desplazado) return;
+  cerrarPeerRx();
+  rx.sesion = uuid(); rx.remotaLista = false; rx.pendientes = [];
+  if (motivo === 'reconectar') { estadoRx('esp', 'Reconectando…'); }
+  enviarRx('hola', { agente: navigator.userAgent.slice(0, 120) });
+  clearTimeout(rx.tOferta);
+  const espera = Math.min(OFERTA_MS * Math.pow(1.5, rx.intentos), 45000);
+  rx.tOferta = setTimeout(() => {
+    if (!rx.cam || rx.pc) return;
+    rx.intentos++;
+    const c = rx.camaras.find(x => x.id === rx.cam.id) || rx.cam;
+    mensajeRx('<span class="spin claro"></span><b>La cámara no responde</b><span>' +
+      (c.en_linea === false ? 'El celular de ' + esc(c.nombre) + ' no da señales (visto ' + hace(c.ultimo_visto) + ').' : 'Puede estar sin internet o con la app cerrada.') +
+      '<br>Reintentando…</span>');
+    estadoRx('err', 'Sin respuesta');
+    nuevaSesionRx('reintento');
+  }, espera);
+}
+function onSenalRx(r) {
+  if (!r || r.de !== 'tx' || r.sesion !== rx.sesion) return;
+  if (r.tipo === 'offer') recibirOferta(r.datos);
+  else if (r.tipo === 'cand') {
+    if (rx.pc && rx.remotaLista) rx.pc.addIceCandidate(r.datos).catch(e => log('ice rx', e));
+    else rx.pendientes.push(r.datos);
+  } else if (r.tipo === 'bye') {
+    const m = (r.datos && r.datos.motivo) || '';
+    cerrarPeerRx();
+    if (m === 'desplazado') {
+      rx.desplazado = true; clearTimeout(rx.tOferta);
+      evento('desplazado', { camara_id: rx.cam.id });
+      estadoRx('', 'Desconectado');
+      mensajeRx('<b>Otro dispositivo tomó la cámara</b><span>La cámara muestra un solo visor a la vez: el último que entra desplaza al anterior.</span>' +
+        '<button class="bp pri" type="button" id="rx-retomar">' + ico('ojo') + '<span>Volver a verla</span></button>');
+      $('rx-retomar').onclick = () => { rx.desplazado = false; rx.intentos = 0; mensajeRx('<span class="spin claro"></span><b>Conectando…</b>'); nuevaSesionRx(); };
+    } else if (m === 'apagada' || m === 'pausada' || m === 'sin_camara') {
+      clearTimeout(rx.tOferta);
+      const txt = m === 'apagada' ? 'La cámara está desactivada en GOE Admin.' : m === 'pausada' ? 'La cámara está pausada en el celular.' : 'El celular no pudo abrir la cámara.';
+      estadoRx('err', 'Sin video');
+      mensajeRx('<b>Sin video</b><span>' + txt + ' Reintentando en 30 s…</span>');
+      clearTimeout(rx.tCaida); rx.tCaida = setTimeout(() => nuevaSesionRx('reintento'), 30000);
+    } else {
+      estadoRx('esp', 'Reconectando…');
+      mensajeRx('<span class="spin claro"></span><b>La cámara cortó la conexión</b><span>Reconectando…</span>');
+      clearTimeout(rx.tCaida); rx.tCaida = setTimeout(() => nuevaSesionRx('reconectar'), 2000);
+    }
+  }
+}
+async function recibirOferta(oferta) {
+  clearTimeout(rx.tOferta);
+  cerrarPeerRx(true);
+  const sesion = rx.sesion;
+  const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  rx.pc = pc;
+  pc.ontrack = e => {
+    const v = $('rx-video');
+    if (v.srcObject !== e.streams[0]) { v.srcObject = e.streams[0]; v.play().catch(() => {}); }
+  };
+  pc.ondatachannel = e => configurarDcRx(e.channel);
+  pc.onicecandidate = e => { if (e.candidate && pc === rx.pc) enviarRx('cand', e.candidate.toJSON(), sesion); };
+  pc.onconnectionstatechange = () => {
+    if (pc !== rx.pc) return;
+    const s = pc.connectionState;
+    log('rx pc', s);
+    if (s === 'connected') {
+      clearTimeout(rx.tCaida); rx.intentos = 0;
+      estadoRx('ok', 'En vivo'); mensajeRx('');
+      evento('conectado', { camara_id: rx.cam.id });
+    } else if (s === 'failed') {
+      evento('fallo', { camara_id: rx.cam.id, estado: s });
+      reconectarRx('La conexión falló');
+    } else if (s === 'disconnected') {
+      estadoRx('esp', 'Señal inestable…');
+      clearTimeout(rx.tCaida);
+      rx.tCaida = setTimeout(() => { if (pc === rx.pc && pc.connectionState !== 'connected') reconectarRx('Se perdió la señal'); }, CAIDA_MS);
+    }
+  };
+  try {
+    await pc.setRemoteDescription(oferta);
+    rx.remotaLista = true;
+    const p = rx.pendientes; rx.pendientes = [];
+    p.forEach(c => pc.addIceCandidate(c).catch(e => log('ice rx', e)));
+    const resp = await pc.createAnswer();
+    await pc.setLocalDescription(resp);
+    if (pc !== rx.pc) return;
+    enviarRx('answer', { type: resp.type, sdp: resp.sdp }, sesion);
+    mensajeRx('<span class="spin claro"></span><b>Negociando la conexión…</b>');
+  } catch (e) { console.error('[WebCam answer]', e); reconectarRx('No se pudo negociar'); }
+}
+function reconectarRx(porque) {
+  if (rx.desplazado || !rx.cam) return;
+  cerrarPeerRx();
+  estadoRx('esp', 'Reconectando…');
+  mensajeRx('<span class="spin claro"></span><b>' + esc(porque) + '</b><span>Reconectando solo…</span>');
+  clearTimeout(rx.tCaida);
+  rx.tCaida = setTimeout(() => nuevaSesionRx('reconectar'), 1500);
+}
+function cerrarPeerRx(mantenerVideo) {
+  if (rx.dc) { try { rx.dc.close(); } catch (e) { /* nada */ } rx.dc = null; }
+  if (rx.pc) { const pc = rx.pc; rx.pc = null; try { pc.close(); } catch (e) { /* nada */ } }
+  rx.remotaLista = false;
+  if (!mantenerVideo) $('rx-video').srcObject = null;
+  controlesRx(false);
+}
+function configurarDcRx(dc) {
+  rx.dc = dc;
+  dc.onmessage = e => {
+    let m; try { m = JSON.parse(e.data); } catch (x) { return; }
+    if (m.cmd === 'caps') { rx.facing = m.facing; rx.torchOn = !!m.torchOn; controlesRx(true, !!m.torch); }
+  };
+  dc.onclose = () => controlesRx(false);
+}
+function controlesRx(dcOk, torch) {
+  $('rx-flip').disabled = !dcOk;
+  $('rx-torch').disabled = !dcOk || !torch;
+  $('rx-torch').classList.toggle('on', !!(dcOk && torch && rx.torchOn));
+  $('rx-flip').title = rx.facing === 'user' ? 'Cámara frontal (tocá para cambiar)' : 'Cámara trasera (tocá para cambiar)';
+}
+function comandoRx(obj) { if (rx.dc && rx.dc.readyState === 'open') { try { rx.dc.send(JSON.stringify(obj)); return true; } catch (e) { /* nada */ } } toast('La cámara no está conectada', true); return false; }
+function estadoRx(tipo, txt) { $('rx-punto').className = 'punto ' + (tipo || ''); $('rx-badge-txt').textContent = txt; }
+function mensajeRx(html) { const el = $('rx-msg'); el.innerHTML = html; el.hidden = !html; }
+function salirVista() {
+  clearTimeout(rx.tOferta); clearTimeout(rx.tCaida);
+  if (rx.cam && rx.sesion && !rx.desplazado) enviarRx('bye', { motivo: 'visor_salio' });
+  cerrarPeerRx();
+  if (rx.canal) { try { sb.removeChannel(rx.canal); } catch (e) { /* nada */ } rx.canal = null; }
+  rx.cam = null; rx.sesion = null;
+  if (document.fullscreenElement) salirFull();
+  mostrarListaRx();
+}
+
+/* ════════════════════════════════════════════════════════
+   PANTALLA COMPLETA · WAKE LOCK · INSTALAR · MENÚS
+════════════════════════════════════════════════════════ */
+function enFull() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+function salirFull() { const f = document.exitFullscreen || document.webkitExitFullscreen; if (f) f.call(document); }
+function alternarFull() {
+  if (enFull()) { salirFull(); return; }
+  const el = st.rol === 'rx' && rx.cam ? $('rx-vid') : document.documentElement;
+  const f = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (f) { const p = f.call(el); if (p && p.catch) p.catch(e => toast('No se pudo pasar a pantalla completa', true)); }
+}
+function alCambiarFull() {
+  const fs = enFull();
+  document.body.classList.toggle('fs', fs);
+  document.querySelectorAll('[data-full]').forEach(b => { b.innerHTML = ico(fs ? 'salir' : 'full'); b.title = fs ? 'Salir de pantalla completa' : 'Pantalla completa'; });
+}
+document.addEventListener('fullscreenchange', alCambiarFull);
+document.addEventListener('webkitfullscreenchange', alCambiarFull);
+async function pedirWakeLock() {
+  if (!('wakeLock' in navigator) || document.visibilityState !== 'visible') return;
+  try { if (st.wake && !st.wake.released) return; st.wake = await navigator.wakeLock.request('screen'); log('wake lock activo'); }
+  catch (e) { log('wake lock', e.message); }
+}
+function soltarWakeLock() { try { if (st.wake) st.wake.release(); } catch (e) { /* nada */ } st.wake = null; }
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (st.rol === 'tx' && $('app-tx').classList.contains('activa')) {
+    pedirWakeLock();
+    if (!tx.rtOk) conectarCanalTx();
+    pingPeriodico();
+    if (!tx.stream && tx.cfg && tx.cfg.autoarranque && !tx.pausada && tx.cfg.camara_activa !== false) iniciarCamara();
+  }
+  if (st.rol === 'rx' && $('app-rx').classList.contains('activa')) {
+    if (rx.cam && !rx.desplazado && (!rx.pc || rx.pc.connectionState !== 'connected')) conectarCanalRx(() => nuevaSesionRx('reconectar'));
+    else if (!rx.cam) cargarCamaras();
+  }
+});
+
+let pedidoInstalar = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); pedidoInstalar = e; document.querySelectorAll('[data-instalar]').forEach(b => b.hidden = false); });
+window.addEventListener('appinstalled', () => { document.querySelectorAll('[data-instalar]').forEach(b => b.hidden = true); toast('✓ WebCam instalada'); });
+async function instalar() {
+  if (!pedidoInstalar) return;
+  pedidoInstalar.prompt();
+  try { await pedidoInstalar.userChoice; } catch (e) { /* nada */ }
+  pedidoInstalar = null; document.querySelectorAll('[data-instalar]').forEach(b => b.hidden = true);
+}
+
+async function menuTx() {
+  const c = tx.cfg || {};
+  const r = await abrirModal({
+    titulo: 'Esta cámara',
+    html: '<div>Cámara: <b>' + esc(c.nombre_camara) + '</b> · celular: <b>' + esc(c.nombre) + '</b></div>' +
+      '<div class="nota">Calidad ' + esc(c.calidad) + ' · arranque automático ' + (c.autoarranque ? 'sí' : 'no') + ' · cámara inicial ' + esc(c.camara_inicial) +
+      '<br>La configuración se cambia en GOE Admin → WebCam y llega sola.<br>WebCam ' + VERSION_UI + '</div>',
+    botones: [
+      { texto: 'Recargar', clase: 'sec', valor: 'recargar' },
+      tx.stream ? { texto: 'Pausar cámara', clase: 'sec', valor: 'pausar' } : { texto: 'Iniciar cámara', clase: 'sec', valor: 'iniciar' },
+      { texto: 'Dejar de ser cámara', clase: 'peligro', valor: 'salir' },
+      { texto: 'Cerrar', clase: 'sec', valor: false },
+    ],
+  });
+  if (r === 'recargar') location.reload();
+  if (r === 'pausar') { tx.pausada = true; detenerCamara('pausada'); estadoTx('inactivo', 'Pausada: tocá Iniciar para transmitir'); }
+  if (r === 'iniciar') { tx.pausada = false; iniciarCamara(); }
+  if (r === 'salir') {
+    if (!(await confirmar('Dejar de ser cámara', '<div>Este celular deja de estar emparejado a <b>' + esc(c.nombre_camara) + '</b>.</div><div class="nota">Para volver a usarlo hace falta un código nuevo de GOE Admin.</div>', 'Desemparejar', true))) return;
+    try { await sb.rpc('wc_salir'); } catch (e) { log('salir', e); }
+    salirTx();
+    await cambiarRol();
+  }
+}
+async function menuRx() {
+  const r = await abrirModal({
+    titulo: 'Sesión',
+    html: '<div>Entraste como <b>' + esc(st.email) + '</b></div><div class="nota">WebCam ' + VERSION_UI + '</div>',
+    botones: [
+      { texto: 'Recargar', clase: 'sec', valor: 'recargar' },
+      { texto: 'Cerrar sesión', clase: 'peligro', valor: 'salir' },
+      { texto: 'Cerrar', clase: 'sec', valor: false },
+    ],
+  });
+  if (r === 'recargar') location.reload();
+  if (r === 'salir') { if (rx.cam) salirVista(); limpiarTimers(); await cambiarRol(); }
+}
+
+/* ════════════════════════════════════════════════════════
+   ARRANQUE
+════════════════════════════════════════════════════════ */
+window.addEventListener('load', async () => {
+  $('pie-ver').textContent = 'WebCam DMS ' + VERSION_UI;
+  document.querySelectorAll('[data-version]').forEach(el => el.textContent = VERSION_UI);
+  pintarIconos();
+  $('rol-tx').onclick = () => elegirRol('tx');
+  $('rol-rx').onclick = () => elegirRol('rx');
+  document.querySelectorAll('[data-cambiar-rol]').forEach(b => b.onclick = cambiarRol);
+  $('emp-btn').onclick = emparejar;
+  $('emp-codigo').oninput = () => { if ($('emp-codigo').value.replace(/\D/g, '').length === 6) emparejar(); };
+  $('emp-codigo').onkeydown = e => { if (e.key === 'Enter') emparejar(); };
+  $('login-enviar').onclick = enviarCodigo;
+  $('login-email').onkeydown = e => { if (e.key === 'Enter') enviarCodigo(); };
+  $('login-validar').onclick = validarCodigo;
+  $('login-codigo').onkeydown = e => { if (e.key === 'Enter') validarCodigo(); };
+  $('login-volver').onclick = () => pasoLogin('email');
+  $('denegado-salir').onclick = cambiarRol;
+  $('tx-iniciar').onclick = () => { tx.pausada = false; iniciarCamara(); };
+  $('tx-flip').onclick = cambiarCamara;
+  $('tx-menu').onclick = menuTx;
+  $('rx-menu').onclick = menuRx;
+  $('rx-volver').onclick = salirVista;
+  $('rx-torch').onclick = () => { rx.torchOn = !rx.torchOn; if (comandoRx({ cmd: 'torch', value: rx.torchOn })) $('rx-torch').classList.toggle('on', rx.torchOn); };
+  $('rx-flip').onclick = () => comandoRx({ cmd: 'flipCamera' });
+  document.querySelectorAll('[data-full]').forEach(b => b.onclick = alternarFull);
+  document.querySelectorAll('[data-instalar]').forEach(b => b.onclick = instalar);
+  if (!document.fullscreenEnabled && !document.webkitFullscreenEnabled) document.querySelectorAll('[data-full]').forEach(b => b.hidden = true);
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+    try { navigator.serviceWorker.register('sw.js').catch(e => log('sw', e.message)); } catch (e) { log('sw', e); }
+  }
+  try { await arrancar(); }
+  catch (e) { console.error('[WebCam arrancar]', e); pantalla('rol'); toast('No se pudo arrancar: ' + textoError(e), true); }
+});
+</script>
+</body>
+</html>

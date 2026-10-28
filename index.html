@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-title" content="WebCam">
 <title>WebCam DMS</title>
 <!--
-  index_webcam_v5_0_0.html — WebCam DMS v5.0.0 (28-oct-2026) · Entrega 3 de 4
+  index_webcam_v5_0_1.html — WebCam DMS v5.0.1 (28-oct-2026) · Entrega 3 de 4
   Repo: goeapp/webcam → https://goeapp.github.io/webcam/ (subir como index.html,
         junto con manifest.json, sw.js e icons/icon-192.png, icons/icon-512.png)
 
@@ -30,6 +30,12 @@
     se reconecta solo. La configuración del celular llega por Realtime desde GOE Admin.
 
   Changelog
+  v5.0.1 — fix: el ping del celular actualiza su fila (ultimo_visto/estado) y Realtime lo
+           tomaba como un cambio de configuración → nuevo ping → bucle (cartel "Configuración
+           actualizada" fijo y consultas sin parar). Ahora solo reacciona si cambió algún campo
+           de configuración, y el cartel sale solo si la configuración cambió de verdad.
+           + Botones A− / A+ en el calendario de la cámara: tamaño de letra guardado en ese
+           celular (85 % por defecto, de 60 % a 150 %).
   v5.0.0 — migración a Supabase (adiós GAS, Sheet y token por URL). Ver arriba.
   v4.7   — patrón de instalación estándar, fix SW y manifest (GAS + Sheets).
 -->
@@ -151,15 +157,20 @@ body.fs #app-tx .hdr { display: none; }
 .cal-tit { padding: 12px 16px 8px; display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid var(--panel-borde); }
 .cal-tit b { font-family: 'Bebas Neue', sans-serif; font-size: 1.35rem; letter-spacing: 1px; color: #fbbf24; font-weight: 400; }
 .cal-tit span { font-size: .8rem; color: var(--panel-muted); }
-.cal-lista { overflow-y: auto; padding: 6px 0 10px; flex: 1; min-height: 0; }
+.cal-tam { margin-left: auto; display: flex; gap: 6px; align-self: center; }
+.cal-tam button { width: 34px; height: 30px; border-radius: 8px; border: 1px solid var(--panel-borde); background: rgba(255,255,255,.06);
+  color: var(--panel-muted); font: 600 .8rem 'DM Sans', sans-serif; cursor: pointer; padding: 0; }
+.cal-tam button:active { background: rgba(255,255,255,.18); color: #fff; }
+.cal-tam button:disabled { opacity: .35; cursor: default; }
+.cal-lista { --cal-esc: .85; overflow-y: auto; padding: 6px 0 10px; flex: 1; min-height: 0; }
 .cal-ev { display: flex; gap: 12px; padding: 9px 16px; align-items: baseline; }
 .cal-ev + .cal-ev { border-top: 1px solid rgba(255,255,255,.05); }
-.cal-hora { font-family: 'DM Mono', monospace; font-size: 1rem; color: #fbbf24; min-width: 56px; flex-shrink: 0; }
-.cal-hora.td { font-family: 'DM Sans', sans-serif; font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: #93c5fd; padding-top: 3px; }
+.cal-hora { font-family: 'DM Mono', monospace; font-size: calc(1rem * var(--cal-esc)); color: #fbbf24; min-width: calc(56px * var(--cal-esc)); flex-shrink: 0; }
+.cal-hora.td { font-family: 'DM Sans', sans-serif; font-size: calc(.72rem * var(--cal-esc)); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: #93c5fd; padding-top: 3px; }
 .cal-txt { min-width: 0; }
-.cal-titulo { font-size: clamp(1rem, 3.6vw, 1.25rem); color: #fff; line-height: 1.3; word-wrap: break-word; }
-.cal-lugar { font-size: .8rem; color: var(--panel-muted); }
-.cal-vacio { padding: 18px 16px; color: var(--panel-muted); font-size: .95rem; }
+.cal-titulo { font-size: calc(clamp(1rem, 3.6vw, 1.25rem) * var(--cal-esc)); color: #fff; line-height: 1.3; word-wrap: break-word; }
+.cal-lugar { font-size: calc(.8rem * var(--cal-esc)); color: var(--panel-muted); }
+.cal-vacio { padding: 18px 16px; color: var(--panel-muted); font-size: calc(.95rem * var(--cal-esc)); }
 .t-cam { grid-area: cam; display: flex; align-items: center; gap: 12px; padding: 10px; }
 .prev { position: relative; width: 140px; aspect-ratio: 16/9; border-radius: 10px; overflow: hidden; background: #000; flex-shrink: 0; }
 .prev video { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -312,7 +323,8 @@ body.fs #app-rx .hdr { display: none; }
       </div>
     </div>
     <div class="tarjeta t-cal" id="tx-t-cal">
-      <div class="cal-tit"><b id="tx-cal-nombre">Calendario</b><span id="tx-cal-dia">hoy</span></div>
+      <div class="cal-tit"><b id="tx-cal-nombre">Calendario</b><span id="tx-cal-dia">hoy</span>
+        <div class="cal-tam"><button id="tx-cal-menos" title="Letra más chica">A−</button><button id="tx-cal-mas" title="Letra más grande">A+</button></div></div>
       <div class="cal-lista" id="tx-cal-lista"><div class="cal-vacio">Cargando…</div></div>
     </div>
     <div class="tarjeta t-cam" id="tx-t-cam">
@@ -370,7 +382,7 @@ body.fs #app-rx .hdr { display: none; }
 /* ════════════════════════════════════════════════════════
    CONFIGURACIÓN
 ════════════════════════════════════════════════════════ */
-const VERSION_UI    = 'v5.0.0';
+const VERSION_UI    = 'v5.0.1';
 const SUPABASE_URL  = 'https://uhuftsxrzwhmvzygcuvp.supabase.co';
 const SUPABASE_KEY  = 'sb_publishable_TCibRAnzgaDIbn_MIirw6w_FltKG8X3';
 const REDIRECT_MAIL = 'https://goeapp.github.io/webcam/';   // la plantilla del mail lo usa para poner "WEBCAM"
@@ -386,7 +398,13 @@ const CALIDAD = {
   media: { w: 960,  h: 540, fps: 15, br: 700000 },
   baja:  { w: 640,  h: 360, fps: 10, br: 300000 }
 };
+// Campos de wc_dispositivos que son configuración (los demás —ultimo_visto, estado— los cambia el ping)
+const CFG_FILA = ['nombre', 'camara_id', 'autoarranque', 'camara_inicial', 'mostrar_reloj', 'mostrar_clima', 'mostrar_calendario', 'calendario_id', 'calidad'];
+const CFG_PING = ['nombre', 'camara_id', 'camara_activa', 'autoarranque', 'camara_inicial', 'mostrar_reloj', 'mostrar_clima', 'mostrar_calendario', 'calendario', 'calidad'];
+const firma = (o, campos) => campos.map(k => String(o ? o[k] : '')).join('|');
 const LS = { rol: 'wc-rol', email: 'wc-email', nombre: 'wc-tx-nombre', geo: 'wc-geo' };
+// Tamaño de letra del calendario (solo en este celular)
+const CAL_ESC = { clave: 'wc-cal-escala', def: 0.85, min: 0.6, max: 1.5, paso: 0.1 };
 const PING_MS = 60000, LISTA_MS = 20000, CLIMA_MS = 30 * 60000, CAL_MS = 15 * 60000;
 const OFERTA_MS = 12000, CAIDA_MS = 10000, SIN_RESPUESTA_MS = 30000;
 
@@ -401,7 +419,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
 const st = { rol: null, email: '', uid: null, wake: null, timers: [] };
 const tx = { cfg: null, canal: null, rtOk: false, stream: null, facing: 'environment', torch: false,
              pc: null, dc: null, sesion: null, remotaLista: false, pendientes: [], tCaida: null, tSinResp: null,
-             pausada: false, tReintento: null, estado: 'inactivo', geo: null, calFecha: '' };
+             pausada: false, tReintento: null, estado: 'inactivo', geo: null, calFecha: '', firmaFila: undefined };
 const rx = { camaras: [], cam: null, canal: null, sesion: null, pc: null, dc: null, remotaLista: false, pendientes: [],
              tOferta: null, tCaida: null, intentos: 0, desplazado: false, torchOn: false, facing: 'environment' };
 let emailPendiente = '';
@@ -678,10 +696,17 @@ function conectarCanalTx() {
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wc_senales', filter: 'camara_id=eq.' + tx.cfg.camara_id }, p => {
       try { onSenalTx(p.new); } catch (e) { console.error('[WebCam señal]', e); }
     })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'wc_dispositivos', filter: 'auth_uid=eq.' + st.uid }, async () => {
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'wc_dispositivos', filter: 'auth_uid=eq.' + st.uid }, async p => {
+      // v5.0.1 — el propio ping actualiza la fila: solo se reacciona si cambió la configuración
+      if (p.eventType === 'UPDATE' && p.new) {
+        const f = firma(p.new, CFG_FILA);
+        if (f === tx.firmaFila) return;
+        tx.firmaFila = f;               // el primer aviso solo toma la referencia (sin cartel si nada cambió)
+      }
+      const antes = firma(tx.cfg, CFG_PING);
       const cfg = await ping();
       if (cfg === null) { salirTx(); mostrarEmparejar('Este celular fue desemparejado desde GOE Admin.'); return; }
-      if (cfg) { aplicarConfig(cfg); toast('Configuración actualizada'); }
+      if (cfg) { aplicarConfig(cfg); if (firma(cfg, CFG_PING) !== antes) toast('Configuración actualizada'); }
     })
     .subscribe(status => {
       log('rt', status);
@@ -950,6 +975,16 @@ async function actualizarClima() {
     $('tx-clima-mm').textContent = dl.temperature_2m_max ? 'Máx ' + Math.round(dl.temperature_2m_max[0]) + '° · Mín ' + Math.round(dl.temperature_2m_min[0]) + '°' + (pr != null ? ' · Lluvia ' + pr + '%' : '') : '';
   } catch (e) { $('tx-clima-desc').textContent = 'Sin datos del clima'; log('clima', e); }
 }
+function escalaCal(delta) {
+  let v = parseFloat(lsGet(CAL_ESC.clave));
+  if (!(v >= CAL_ESC.min && v <= CAL_ESC.max)) v = CAL_ESC.def;
+  if (delta) { v = Math.round((v + delta) * 100) / 100; v = Math.min(CAL_ESC.max, Math.max(CAL_ESC.min, v)); lsSet(CAL_ESC.clave, String(v)); }
+  $('tx-cal-lista').style.setProperty('--cal-esc', v);
+  $('tx-cal-menos').disabled = v <= CAL_ESC.min + 1e-9;
+  $('tx-cal-mas').disabled = v >= CAL_ESC.max - 1e-9;
+  if (delta) toast('Letra del calendario: ' + Math.round(v * 100) + ' %');
+}
+
 async function actualizarCalendario() {
   if (!tx.cfg || !tx.cfg.mostrar_calendario) return;
   const fecha = hoyISO();
@@ -1288,6 +1323,9 @@ window.addEventListener('load', async () => {
   $('tx-iniciar').onclick = () => { tx.pausada = false; iniciarCamara(); };
   $('tx-flip').onclick = cambiarCamara;
   $('tx-menu').onclick = menuTx;
+  $('tx-cal-menos').onclick = () => escalaCal(-CAL_ESC.paso);
+  $('tx-cal-mas').onclick = () => escalaCal(CAL_ESC.paso);
+  escalaCal(0);
   $('rx-menu').onclick = menuRx;
   $('rx-volver').onclick = salirVista;
   $('rx-torch').onclick = () => { rx.torchOn = !rx.torchOn; if (comandoRx({ cmd: 'torch', value: rx.torchOn })) $('rx-torch').classList.toggle('on', rx.torchOn); };

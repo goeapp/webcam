@@ -9,11 +9,12 @@
 <meta name="apple-mobile-web-app-title" content="WebCam">
 <title>WebCam DMS</title>
 <!--
-  index_webcam_v5_2_0.html — WebCam DMS v5.2.0 (02-nov-2026)
+  index_webcam_v5_3_0.html — WebCam DMS v5.3.0 (02-nov-2026)
   Repo: goeapp/webcam → https://goeapp.github.io/webcam/ (subir como index.html,
         junto con manifest.json, sw.js e icons/icon-192.png, icons/icon-512.png)
 
   Requiere en Supabase (PWAgoe): wc_esquema_v5_0_0.sql + wc_radios_v5_1_0.sql + wc_alarma_v5_2_0.sql
+  + wc_alarma_visor_v5_3_0.sql
   + Edge Functions wc-calendario y tg-notify (con el secreto TG_TOKEN)
   + https://goeapp.github.io/webcam/ en Authentication → URL Configuration → Redirect URLs.
 
@@ -31,6 +32,10 @@
     se reconecta solo. La configuración del celular llega por Realtime desde GOE Admin.
 
   Changelog
+  v5.3.0 — Visor: botón 🔔 (campana) al lado de cada cámara para activar o apagar la alarma a distancia, con
+           confirmación. Campana gris = apagada; roja = activada (con "último aviso" en la línea de la cámara).
+           Se guarda en el mismo lugar que GOE Admin (wc_dispositivos.alarma) y queda en el Registro con tu mail.
+           El celular la recibe al instante (con el minuto de gracia de siempre).
   v5.2.0 — Reposo: sin movimiento durante X minutos (5 por defecto) el panel queda todo negro, como apagado.
            Se prende solo por movimiento, al tocar la pantalla o cuando entra un visor. La cámara sigue transmitiendo.
            Detector de movimiento con la misma cámara (compara imágenes de 64×36 cada medio segundo; sensibilidad
@@ -263,6 +268,16 @@ body.reposo-on { background: #000; }
 .cams { display: flex; flex-direction: column; gap: 10px; max-width: 640px; margin: 0 auto; }
 .cam { display: flex; align-items: center; gap: 14px; text-align: left; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); width: 100%; }
 .cam:active { border-color: var(--accent); }
+.cam-fila { display: flex; align-items: stretch; gap: 8px; }
+.cam-fila .cam { flex: 1; min-width: 0; }
+.campana { width: 56px; flex-shrink: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: #94a3b8;
+  display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); }
+.campana .ico { width: 22px; height: 22px; }
+.campana:active { border-color: var(--accent); }
+.campana.on { background: #fef2f2; border-color: #fca5a5; color: var(--danger); }
+.campana.on .ico { fill: currentColor; }
+.campana:disabled { opacity: .35; }
+.cam-det .alarma-txt { color: var(--danger); font-weight: 600; }
 .cam-ico { width: 44px; height: 44px; border-radius: 12px; background: #f1f5f9; display: flex; align-items: center; justify-content: center; color: var(--muted); flex-shrink: 0; }
 .cam-ico.on { background: var(--ok-bg); color: var(--ok-fg); }
 .cam-nom { font-weight: 600; font-size: 1rem; }
@@ -478,7 +493,7 @@ body.fs #app-rx .hdr { display: none; }
 /* ════════════════════════════════════════════════════════
    CONFIGURACIÓN
 ════════════════════════════════════════════════════════ */
-const VERSION_UI    = 'v5.2.0';
+const VERSION_UI    = 'v5.3.0';
 const SUPABASE_URL  = 'https://uhuftsxrzwhmvzygcuvp.supabase.co';
 const SUPABASE_KEY  = 'sb_publishable_TCibRAnzgaDIbn_MIirw6w_FltKG8X3';
 const REDIRECT_MAIL = 'https://goeapp.github.io/webcam/';   // la plantilla del mail lo usa para poner "WEBCAM"
@@ -582,6 +597,7 @@ const ICO_PATHS = {
   atras:  '<path d="M15 18l-6-6 6-6"/>',
   flip:   '<path d="M20 7h-3.5l-1.5-2H9L7.5 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/><path d="M9 13a3 3 0 0 1 5.2-2M15 13a3 3 0 0 1-5.2 2"/><path d="M14.5 9.5v1.7h-1.7M9.5 16.5v-1.7h1.7"/>',
   play:   '<path d="M7 4.5v15l13-7.5z"/>',
+  campana:'<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>',
   pausa:  '<rect x="6" y="4.5" width="4" height="15" rx="1"/><rect x="14" y="4.5" width="4" height="15" rx="1"/>',
   izq:    '<path d="M15 18l-6-6 6-6"/>',
   der:    '<path d="M9 18l6-6-6-6"/>',
@@ -1388,11 +1404,31 @@ function pintarCamaras() {
   if (!rx.camaras.length) { el.innerHTML = '<div class="vacio">No hay cámaras cargadas (se cargan en GOE Admin → WebCam).</div>'; return; }
   el.innerHTML = '<div style="display:flex;flex-direction:column;gap:10px">' + rx.camaras.map((c, i) => {
     const inf = infoCamara(c);
-    return '<button class="cam" type="button" data-cam="' + i + '"><span class="cam-ico ' + (inf.on ? 'on' : '') + '">' + ico('camara') + '</span>' +
-      '<span style="min-width:0;flex:1"><span class="cam-nom">' + esc(c.nombre) + '</span> ' + inf.chip + '<br><span class="cam-det">' + inf.det + '</span></span>' +
-      '<span style="color:var(--muted)">›</span></button>';
+    const al = c.alarma ? '<br><span class="alarma-txt">Alarma activada' + (c.alarma_ultimo_aviso ? ' · último aviso ' + hace(c.alarma_ultimo_aviso) : '') + '</span>' : '';
+    return '<div class="cam-fila"><button class="cam" type="button" data-cam="' + i + '"><span class="cam-ico ' + (inf.on ? 'on' : '') + '">' + ico('camara') + '</span>' +
+      '<span style="min-width:0;flex:1"><span class="cam-nom">' + esc(c.nombre) + '</span> ' + inf.chip + '<br><span class="cam-det">' + inf.det + al + '</span></span>' +
+      '<span style="color:var(--muted)">›</span></button>' +
+      '<button class="campana ' + (c.alarma ? 'on' : '') + '" type="button" data-alarma="' + i + '" title="' + (c.alarma ? 'Alarma activada: tocá para apagarla' : 'Alarma apagada: tocá para activarla') + '"' +
+      (c.dispositivo ? '' : ' disabled') + '>' + ico('campana') + '</button></div>';
   }).join('') + '</div>';
   el.querySelectorAll('[data-cam]').forEach(b => b.onclick = () => verCamara(rx.camaras[+b.dataset.cam]));
+  el.querySelectorAll('[data-alarma]').forEach(b => b.onclick = () => alternarAlarma(rx.camaras[+b.dataset.alarma]));
+}
+// v5.3.0 — Alarma sí / no a distancia (wc_alarma_set). Lo demás de la configuración sigue en GOE Admin.
+async function alternarAlarma(c) {
+  const activar = !c.alarma;
+  const ok = await confirmar(activar ? '🔔 Activar alarma' : 'Apagar alarma',
+    activar ? '<div>Con movimiento en <b>' + esc(c.nombre) + '</b> te avisa por Telegram con una foto.</div><div class="nota">Empieza a vigilar en 1 minuto. Para apagarla, tocá la campana de nuevo.</div>'
+            : '<div>La cámara <b>' + esc(c.nombre) + '</b> deja de avisar por movimiento.</div><div class="nota">Se sigue viendo en vivo igual.</div>',
+    activar ? 'Activar' : 'Apagar', !activar);
+  if (!ok) return;
+  try {
+    const res = await q(sb.rpc('wc_alarma_set', { p_camara: c.id, p_activa: activar }));
+    if (!res || !res.ok) { toast(res && res.motivo === 'sin_celular' ? 'Esa cámara no tiene celular emparejado' : 'No se pudo cambiar la alarma', true); return; }
+    c.alarma = activar; pintarCamaras();
+    toast(activar ? '🔔 Alarma activada (vigila en 1 minuto)' : 'Alarma apagada');
+  } catch (e) { console.error('[wc_alarma_set]', e); toast('No se pudo cambiar la alarma: ' + textoError(e), true); }
+  cargarCamaras();
 }
 function mostrarListaRx() {
   $('rx-lista-vista').hidden = false; $('rx-ver').hidden = true; $('rx-volver').hidden = true;

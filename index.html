@@ -9,11 +9,12 @@
 <meta name="apple-mobile-web-app-title" content="WebCam">
 <title>WebCam DMS</title>
 <!--
-  index_webcam_v5_1_0.html — WebCam DMS v5.1.0 (28-oct-2026)
+  index_webcam_v5_2_0.html — WebCam DMS v5.2.0 (02-nov-2026)
   Repo: goeapp/webcam → https://goeapp.github.io/webcam/ (subir como index.html,
         junto con manifest.json, sw.js e icons/icon-192.png, icons/icon-512.png)
 
-  Requiere en Supabase (PWAgoe): wc_esquema_v5_0_0.sql + wc_radios_v5_1_0.sql + Edge Function wc-calendario
+  Requiere en Supabase (PWAgoe): wc_esquema_v5_0_0.sql + wc_radios_v5_1_0.sql + wc_alarma_v5_2_0.sql
+  + Edge Functions wc-calendario y tg-notify (con el secreto TG_TOKEN)
   + https://goeapp.github.io/webcam/ en Authentication → URL Configuration → Redirect URLs.
 
   Un solo index para los dos roles, elegido una vez por dispositivo:
@@ -30,6 +31,14 @@
     se reconecta solo. La configuración del celular llega por Realtime desde GOE Admin.
 
   Changelog
+  v5.2.0 — Reposo: sin movimiento durante X minutos (5 por defecto) el panel queda todo negro, como apagado.
+           Se prende solo por movimiento, al tocar la pantalla o cuando entra un visor. La cámara sigue transmitiendo.
+           Detector de movimiento con la misma cámara (compara imágenes de 64×36 cada medio segundo; sensibilidad
+           baja / media / alta). Alarma por movimiento: saca una foto y la manda por Telegram (Edge Function
+           tg-notify) con hora, cámara y link al visor; como mucho un aviso cada X minutos (10 por defecto, lo
+           controla el servidor). Al activarla hay 1 minuto de gracia para salir de la casa sin disparar el aviso.
+           Todo se configura en GOE Admin v1.8 → WC → ficha del celular y llega en vivo.
+           + El botón ✕ Salir de pantalla completa pasa arriba a la izquierda (tapaba A− / A+ del calendario).
   v5.1.0 — Radio por internet en el panel de casa: barra abajo (▶/❚❚, la que suena) y botón "📻 Radios" que
            sube un panel con las radios fijas de a 4 (flechas ‹ ›). Elegís una y baja solo (también a los 15 s).
            Las radios se cargan en GOE Admin v1.7 → WC → 📻 Radios (las mismas para todos); mostrar_radio por celular.
@@ -199,7 +208,7 @@ body.fs #app-tx .hdr { display: none; }
 .radio-logo { width: 34px; height: 34px; border-radius: 8px; flex-shrink: 0; object-fit: cover; background: #fff; display: grid; place-items: center; font-size: .72rem; font-weight: 800; color: #fff; }
 .radio-pag { text-align: center; font-size: .72rem; color: var(--panel-muted); }
 /* ── Salir de pantalla completa (v5.1.0) ── */
-.fs-salir { position: fixed; top: 10px; right: 10px; z-index: 40; height: 40px; min-width: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.25);
+.fs-salir { position: fixed; top: 10px; left: 10px; z-index: 40; height: 40px; min-width: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.25);
   background: rgba(15,23,42,.75); color: #fff; display: none; align-items: center; gap: 6px; font-weight: 600; font-size: .8rem; opacity: .35; transition: opacity .3s; }
 body.fs .fs-salir { display: inline-flex; }
 .fs-salir.ver { opacity: 1; }
@@ -239,6 +248,14 @@ body.fs .fs-salir { display: inline-flex; }
 .bp { height: 40px; min-width: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); color: #fff; display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-weight: 600; font-size: .85rem; }
 .bp:active { background: rgba(255,255,255,.16); }
 .bp.pri { background: var(--accent); border-color: var(--accent-border); }
+
+/* ── REPOSO Y ALARMA (v5.2.0) ── */
+.reposo { position: fixed; inset: 0; z-index: 45; background: #000; display: none; cursor: none; }
+.reposo.ver { display: block; }
+body.reposo-on { background: #000; }
+.cam-alarma { display: inline-flex; align-items: center; gap: 4px; margin-top: 3px; font-size: .7rem; font-weight: 700; color: #fca5a5;
+  background: rgba(220,38,38,.18); border: 1px solid rgba(248,113,113,.45); border-radius: 999px; padding: 1px 8px;
+  max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ── VISOR ──────────────────────────────────────────────── */
 .rx-cuerpo { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; }
@@ -389,6 +406,7 @@ body.fs #app-rx .hdr { display: none; }
       <div class="cam-info">
         <div class="cam-estado"><span class="punto" id="tx-punto"></span><span id="tx-estado">Iniciando…</span></div>
         <div class="cam-sub" id="tx-sub"></div>
+        <div class="cam-alarma" id="tx-alarma" hidden>🔔 Alarma activada</div>
       </div>
       <div class="cam-acc">
         <button class="bp" type="button" id="tx-flip" title="Cambiar de cámara" data-ico="flip" hidden></button>
@@ -452,6 +470,7 @@ body.fs #app-rx .hdr { display: none; }
 <div id="modal"><div class="modal" role="dialog" aria-modal="true"><div class="modal-head" id="modal-tit"></div><div class="modal-body" id="modal-body"></div><div class="modal-foot" id="modal-foot"></div></div></div>
 <div id="toast"></div>
 <button class="fs-salir" type="button" id="fs-salir" title="Salir de pantalla completa"><span data-ico="salir"></span><span>Salir</span></button>
+<div class="reposo" id="tx-reposo" aria-hidden="true"></div>
 
 <script>
 'use strict';
@@ -459,11 +478,12 @@ body.fs #app-rx .hdr { display: none; }
 /* ════════════════════════════════════════════════════════
    CONFIGURACIÓN
 ════════════════════════════════════════════════════════ */
-const VERSION_UI    = 'v5.1.0';
+const VERSION_UI    = 'v5.2.0';
 const SUPABASE_URL  = 'https://uhuftsxrzwhmvzygcuvp.supabase.co';
 const SUPABASE_KEY  = 'sb_publishable_TCibRAnzgaDIbn_MIirw6w_FltKG8X3';
 const REDIRECT_MAIL = 'https://goeapp.github.io/webcam/';   // la plantilla del mail lo usa para poner "WEBCAM"
 const FN_CALENDARIO = 'wc-calendario';
+const FN_AVISOS     = 'tg-notify';
 // Lista ICE: STUN de Google. Para sumar un TURN: { urls: 'turn:…', username: '…', credential: '…' }
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -476,8 +496,10 @@ const CALIDAD = {
   baja:  { w: 640,  h: 360, fps: 10, br: 300000 }
 };
 // Campos de wc_dispositivos que son configuración (los demás —ultimo_visto, estado— los cambia el ping)
-const CFG_FILA = ['nombre', 'camara_id', 'autoarranque', 'camara_inicial', 'mostrar_reloj', 'mostrar_clima', 'mostrar_calendario', 'calendario_id', 'calidad', 'mostrar_radio'];
-const CFG_PING = ['nombre', 'camara_id', 'camara_activa', 'autoarranque', 'camara_inicial', 'mostrar_reloj', 'mostrar_clima', 'mostrar_calendario', 'calendario', 'calidad', 'mostrar_radio', 'radios'];
+const CFG_FILA = ['nombre', 'camara_id', 'autoarranque', 'camara_inicial', 'mostrar_reloj', 'mostrar_clima', 'mostrar_calendario', 'calendario_id', 'calidad', 'mostrar_radio',
+                  'reposo', 'reposo_min', 'alarma', 'alarma_intervalo_min', 'sensibilidad'];
+const CFG_PING = ['nombre', 'camara_id', 'camara_activa', 'autoarranque', 'camara_inicial', 'mostrar_reloj', 'mostrar_clima', 'mostrar_calendario', 'calendario', 'calidad', 'mostrar_radio', 'radios',
+                  'reposo', 'reposo_min', 'alarma', 'alarma_intervalo_min', 'sensibilidad'];
 const firma = (o, campos) => campos.map(k => { const v = o ? o[k] : ''; return v && typeof v === 'object' ? JSON.stringify(v) : String(v); }).join('|');
 const LS = { rol: 'wc-rol', email: 'wc-email', nombre: 'wc-tx-nombre', geo: 'wc-geo', radio: 'wc-radio-ult' };
 const RADIO_POR_PAG = 4, RADIO_CIERRE_MS = 15000;
@@ -485,6 +507,13 @@ const RADIO_POR_PAG = 4, RADIO_CIERRE_MS = 15000;
 const CAL_ESC = { clave: 'wc-cal-escala', def: 0.85, min: 0.6, max: 1.5, paso: 0.1 };
 const PING_MS = 60000, LISTA_MS = 20000, CLIMA_MS = 30 * 60000, CAL_MS = 15 * 60000;
 const OFERTA_MS = 12000, CAIDA_MS = 10000, SIN_RESPUESTA_MS = 30000;
+// Movimiento (v5.2.0): imagen chica cada medio segundo. pix = cuánto tiene que cambiar un punto (0–255);
+// frac = qué parte de la imagen tiene que cambiar. Dos lecturas seguidas para que cuente (evita ruido).
+const MOV = { w: 64, h: 36, cada: 500, seguidas: 2, arranque: 3000,
+  sens: { alta: { pix: 18, frac: 0.004 }, media: { pix: 26, frac: 0.012 }, baja: { pix: 36, frac: 0.03 } } };
+const ALARMA_GRACIA_MS = 60000;      // al activar la alarma: 1 minuto para salir sin disparar
+const ALARMA_REINTENTO_MS = 60000;   // si falló el envío, no reintenta antes de 1 minuto
+const FOTO_ANCHO = 1280, FOTO_CALIDAD = 0.78;
 
 // Sesión propia de WebCam: todas las PWA viven en goeapp.github.io (mismo localStorage)
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
@@ -498,7 +527,9 @@ const st = { rol: null, email: '', uid: null, wake: null, timers: [] };
 const tx = { cfg: null, canal: null, rtOk: false, stream: null, facing: 'environment', torch: false,
              pc: null, dc: null, sesion: null, remotaLista: false, pendientes: [], tCaida: null, tSinResp: null,
              pausada: false, tReintento: null, estado: 'inactivo', geo: null, calFecha: '', firmaFila: undefined,
-             radio: null, radioPag: 0, radioSuena: false, tHoja: null };
+             radio: null, radioPag: 0, radioSuena: false, tHoja: null,
+             dormido: false, ultActividad: Date.now(), movPrev: null, movSeguidas: 0, movDesde: 0,
+             alarmaDesde: 0, alarmaProxima: 0, alarmaEnviando: false, ultMov: 0 };
 const rx = { camaras: [], cam: null, canal: null, sesion: null, pc: null, dc: null, remotaLista: false, pendientes: [],
              tOferta: null, tCaida: null, intentos: 0, desplazado: false, torchOn: false, facing: 'environment' };
 let emailPendiente = '';
@@ -731,6 +762,10 @@ async function entrarTx(ses) {
   st.timers.push(setInterval(pingPeriodico, PING_MS));
   st.timers.push(setInterval(actualizarClima, CLIMA_MS));
   st.timers.push(setInterval(() => actualizarCalendario(), CAL_MS));
+  st.timers.push(setInterval(tickMovimiento, MOV.cada));          // v5.2.0
+  st.timers.push(setInterval(tickReposo, 5000));
+  tx.ultActividad = Date.now();
+  if (tx.cfg.alarma) tx.alarmaDesde = Date.now();
   actualizarClima();
   actualizarCalendario();
   conectarCanalTx();
@@ -756,11 +791,17 @@ function aplicarPanel() {
   $('tx-cal-nombre').textContent = c.calendario || 'Calendario';
   $('tx-panel').classList.toggle('sin-clima', c.mostrar_clima === false);
   aplicarRadios();
+  aplicarAlarmaUI();
 }
 // Cambios de configuración (GOE Admin → Realtime o ping)
 function aplicarConfig(nueva) {
   const vieja = tx.cfg || {};
   tx.cfg = nueva;
+  if (!!nueva.alarma !== !!vieja.alarma && vieja.camara_id) {          // v5.2.0
+    if (nueva.alarma) { tx.alarmaDesde = Date.now(); tx.alarmaProxima = 0; }
+    setTimeout(() => toast(nueva.alarma ? '🔔 Alarma activada: con movimiento avisa por Telegram (en 1 minuto)' : 'Alarma desactivada'), 2700);
+  }
+  if (nueva.reposo === false && tx.dormido) despertar('config');
   aplicarPanel();
   if (nueva.mostrar_calendario && (!vieja.mostrar_calendario || vieja.calendario !== nueva.calendario)) actualizarCalendario();
   if (nueva.mostrar_clima && vieja.mostrar_clima === false) actualizarClima();
@@ -861,6 +902,7 @@ async function iniciarCamara() {
 }
 function vincularStream() {
   const v = $('tx-video'); v.srcObject = tx.stream;
+  tx.movPrev = null; tx.movSeguidas = 0; tx.movDesde = Date.now();   // la cámara recién abierta ajusta la luz: no cuenta
   const track = tx.stream.getVideoTracks()[0];
   if (track) {
     try { const caps = track.getCapabilities ? track.getCapabilities() : {}; tx.torch = !!(caps && caps.torch); } catch (e) { tx.torch = false; }
@@ -934,6 +976,7 @@ function onSenalTx(r) {
   }
 }
 async function atenderHola(sesion) {
+  despertar('visor');
   if (tx.cfg.camara_activa === false) { enviarTx(sesion, 'bye', { motivo: 'apagada' }); return; }
   if (!tx.stream) {
     if (!tx.pausada) await iniciarCamara();
@@ -1015,10 +1058,99 @@ function enviarCaps() {
 }
 function salirTx() {
   limpiarTimers();
+  despertar('salir');
   pararRadio(); cerrarHoja();
   detenerCamara('desemparejado');
   if (tx.canal) { try { sb.removeChannel(tx.canal); } catch (e) { /* nada */ } tx.canal = null; }
   soltarWakeLock();
+}
+
+/* ── Reposo y movimiento (v5.2.0) ──
+   Reposo: sin movimiento ni toques durante reposo_min, el panel queda negro (la cámara sigue transmitiendo).
+   Se prende por movimiento, al tocar la pantalla o cuando entra un visor.
+   Movimiento: la misma cámara, en chiquito (64×36, escala de grises) cada medio segundo contra la anterior.
+   Alarma: con movimiento saca una foto y la manda a tg-notify; el servidor decide si toca avisar
+   (alarma activada y minutos entre avisos) y la reenvía por Telegram. */
+const movCanvas = document.createElement('canvas'); movCanvas.width = MOV.w; movCanvas.height = MOV.h;
+let movCtx = null;
+function detectorActivo() { return !!(tx.stream && tx.cfg && (tx.cfg.reposo !== false || tx.cfg.alarma)); }
+function tickMovimiento() {
+  if (!detectorActivo()) { tx.movPrev = null; tx.movSeguidas = 0; return; }
+  const v = $('tx-video');
+  if (!v || v.readyState < 2 || !v.videoWidth) return;
+  if (Date.now() - tx.movDesde < MOV.arranque) { tx.movPrev = null; return; }
+  if (!movCtx) movCtx = movCanvas.getContext('2d', { willReadFrequently: true });
+  let px;
+  try { movCtx.drawImage(v, 0, 0, MOV.w, MOV.h); px = movCtx.getImageData(0, 0, MOV.w, MOV.h).data; } catch (e) { return; }
+  const n = MOV.w * MOV.h, gris = new Uint8Array(n);
+  for (let i = 0, j = 0; i < n; i++, j += 4) gris[i] = (px[j] * 77 + px[j + 1] * 150 + px[j + 2] * 29) >> 8;
+  const prev = tx.movPrev; tx.movPrev = gris;
+  if (!prev) return;
+  const s = MOV.sens[tx.cfg.sensibilidad] || MOV.sens.media;
+  let cambian = 0;
+  for (let i = 0; i < n; i++) if (Math.abs(gris[i] - prev[i]) > s.pix) cambian++;
+  if (cambian / n >= s.frac) {
+    if (++tx.movSeguidas >= MOV.seguidas) { tx.movSeguidas = 0; hayMovimiento(cambian / n); }
+  } else tx.movSeguidas = 0;
+}
+function hayMovimiento(frac) {
+  tx.ultMov = Date.now(); tx.ultActividad = Date.now();
+  if (tx.dormido) despertar('movimiento');
+  if (tx.cfg && tx.cfg.alarma) dispararAlarma(frac);
+}
+function tickReposo() {
+  if (!tx.cfg || tx.cfg.reposo === false || tx.dormido) return;
+  const min = Math.max(1, Number(tx.cfg.reposo_min) || 5);
+  if (Date.now() - tx.ultActividad >= min * 60000) dormir();
+}
+function dormir() {
+  if (tx.dormido) return;
+  tx.dormido = true; cerrarHoja();
+  $('tx-reposo').classList.add('ver'); document.body.classList.add('reposo-on');
+  log('reposo');
+}
+function despertar(motivo) {
+  tx.ultActividad = Date.now();
+  if (!tx.dormido) return;
+  tx.dormido = false;
+  $('tx-reposo').classList.remove('ver'); document.body.classList.remove('reposo-on');
+  log('despierto', motivo);
+}
+function horaCorta(d) { return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
+function aplicarAlarmaUI() {
+  const on = !!(tx.cfg && tx.cfg.alarma);
+  $('tx-alarma').hidden = !on;
+  $('tx-alarma').textContent = on && tx.ultAviso ? '🔔 Alarma · último aviso ' + horaCorta(tx.ultAviso) : '🔔 Alarma activada';
+}
+function sacarFoto() {
+  const v = $('tx-video');
+  if (!v || !v.videoWidth) return null;
+  const k = Math.min(1, FOTO_ANCHO / v.videoWidth);
+  const c = document.createElement('canvas'); c.width = Math.round(v.videoWidth * k); c.height = Math.round(v.videoHeight * k);
+  try { c.getContext('2d').drawImage(v, 0, 0, c.width, c.height); return c.toDataURL('image/jpeg', FOTO_CALIDAD); } catch (e) { return null; }
+}
+async function dispararAlarma(frac) {
+  const ahora = Date.now();
+  if (tx.alarmaEnviando || ahora < tx.alarmaProxima || ahora - tx.alarmaDesde < ALARMA_GRACIA_MS) return;
+  tx.alarmaEnviando = true;
+  try {
+    const foto = sacarFoto();
+    const { data, error } = await sb.functions.invoke(FN_AVISOS, { body: { accion: 'alarma', app: 'wc', foto } });
+    if (error) throw error;
+    if (data && data.ok) {
+      tx.alarmaProxima = Date.now() + Math.max(1, data.intervalo_min || (tx.cfg && tx.cfg.alarma_intervalo_min) || 10) * 60000;
+      tx.ultAviso = new Date(); aplicarAlarmaUI();
+      log('alarma enviada', Math.round(frac * 1000) / 10 + '%');
+    } else if (data && data.motivo === 'intervalo') {
+      tx.alarmaProxima = Date.now() + Math.max(5, Number(data.espera_s) || 60) * 1000;
+    } else {
+      tx.alarmaProxima = Date.now() + ALARMA_REINTENTO_MS;
+      if (!data || data.motivo !== 'alarma_apagada') evento('alarma_fallo', { motivo: data && data.motivo, error: data && data.error });
+    }
+  } catch (e) {
+    tx.alarmaProxima = Date.now() + ALARMA_REINTENTO_MS;
+    log('alarma', e); evento('alarma_fallo', { error: textoError(e) });
+  } finally { tx.alarmaEnviando = false; }
 }
 
 /* ── Radio por internet (v5.1.0) ──
@@ -1488,6 +1620,8 @@ async function menuTx() {
     titulo: 'Esta cámara',
     html: '<div>Cámara: <b>' + esc(c.nombre_camara) + '</b> · celular: <b>' + esc(c.nombre) + '</b></div>' +
       '<div class="nota">Calidad ' + esc(c.calidad) + ' · arranque automático ' + (c.autoarranque ? 'sí' : 'no') + ' · cámara inicial ' + esc(c.camara_inicial) +
+      '<br>Reposo ' + (c.reposo === false ? 'no' : 'a los ' + esc(c.reposo_min || 5) + ' min sin movimiento') +
+      ' · alarma ' + (c.alarma ? 'activada (aviso cada ' + esc(c.alarma_intervalo_min || 10) + ' min como mucho, sensibilidad ' + esc(c.sensibilidad || 'media') + ')' : 'no') +
       '<br>La configuración se cambia en GOE Admin → WebCam y llega sola.<br>WebCam ' + VERSION_UI + '</div>',
     botones: [
       { texto: 'Recargar', clase: 'sec', valor: 'recargar' },
@@ -1547,7 +1681,9 @@ window.addEventListener('load', async () => {
   escalaCal(0);
   enlazarRadio();
   $('fs-salir').onclick = salirFull;
-  document.addEventListener('pointerdown', () => { if (enFull()) mostrarSalirFs(); }, true);
+  document.addEventListener('pointerdown', () => { if (st.rol === 'tx') tx.ultActividad = Date.now(); if (enFull()) mostrarSalirFs(); }, true);
+  // con click (no pointerdown): así el toque que despierta no "aprieta" el botón que queda abajo
+  $('tx-reposo').addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); despertar('toque'); });
   $('rx-menu').onclick = menuRx;
   $('rx-volver').onclick = salirVista;
   $('rx-torch').onclick = () => { rx.torchOn = !rx.torchOn; if (comandoRx({ cmd: 'torch', value: rx.torchOn })) $('rx-torch').classList.toggle('on', rx.torchOn); };
